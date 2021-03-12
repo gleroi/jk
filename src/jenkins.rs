@@ -72,6 +72,7 @@ impl Cli {
                 .header("Side", "upload");
             let mut encoder = Encoder::new();
             for arg in &args {
+                println!("writing: {}", arg);
                 encoder.string(Code::Arg, arg)?;
             }
             encoder.string(Code::Encoding, "utf-8");
@@ -119,8 +120,8 @@ impl Encoder {
     }
 
     fn frame(&mut self, f: &Frame) -> Result<()> {
-        self.buf.write(&f.data.len().to_be_bytes())?;
-        self.buf.write(&(f.op as u32).to_be_bytes())?;
+        self.buf.write(&(f.data.len() as u32).to_be_bytes())?;
+        self.buf.write(&(f.op as u8).to_be_bytes())?;
         self.buf.write(f.data)?;
         Ok(())
     }
