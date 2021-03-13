@@ -74,8 +74,8 @@ impl Cli {
         for arg in &args {
             encoder.string(Code::Arg, arg)?;
         }
-        encoder.string(Code::Encoding, "UTF-8")?;
-        encoder.string(Code::Locale, "en-US")?;
+        encoder.string(Code::Encoding, "utf-8")?;
+        encoder.string(Code::Locale, "en")?;
         encoder.op(Code::Start)?;
 
         req = req.body(encoder.buffer());
