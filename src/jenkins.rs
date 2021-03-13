@@ -1,7 +1,7 @@
+use anyhow::{anyhow, Result};
 use reqwest::blocking;
 use serde::Deserialize;
-use anyhow::{Result, anyhow};
-use std::io::{Write};
+use std::io::Write;
 use std::thread;
 use uuid::Uuid;
 
@@ -20,23 +20,19 @@ pub struct Cli {
 
 impl Cli {
     pub fn new(cfg: Server) -> Result<Cli> {
-        Ok(Cli {
-            cfg: cfg,
-        })
+        Ok(Cli { cfg: cfg })
     }
 
-    
     fn client(&self) -> Result<blocking::Client> {
         let mut builder = blocking::Client::builder()
-                .tcp_keepalive(std::time::Duration::from_secs(1))
-                .cookie_store(true)
-                .danger_accept_invalid_certs(true);
+            .tcp_keepalive(std::time::Duration::from_secs(1))
+            .cookie_store(true)
+            .danger_accept_invalid_certs(true);
         if let Some(proxy) = &self.cfg.proxy {
             builder = builder.proxy(reqwest::Proxy::all(proxy)?);
         }
         Ok(builder.build()?)
     }
-
 
     pub fn send(&self, args: Vec<String>) -> Result<()> {
         use std::sync::{Arc, Barrier};
@@ -49,14 +45,15 @@ impl Cli {
         let server = thread::spawn(move || -> Result<()> {
             let clt = clt_server.client()?;
             let url = reqwest::Url::parse(&format!("{}/{}", &clt_server.cfg.url, "cli"))?;
-            let mut server_output = clt.post(url)
+            let mut server_output = clt
+                .post(url)
                 .query(&[("remoting", "false")])
                 .basic_auth(clt_server.cfg.username, Some(clt_server.cfg.password))
                 .header("Session", format!("{}", &uuid))
                 .header("Side", "download")
                 .send()?;
             server_ready.wait();
-            let mut buf : Vec<u8> = Vec::with_capacity(1024);
+            let mut buf: Vec<u8> = Vec::with_capacity(1024);
             server_output.copy_to(&mut buf)?;
             let str = String::from_utf8_lossy(&buf);
             println!("{}", str);
@@ -65,7 +62,8 @@ impl Cli {
 
         let clt = self.client()?;
         let url = reqwest::Url::parse(&format!("{}/{}", &self.cfg.url, "cli"))?;
-        let mut req = clt.post(url)
+        let mut req = clt
+            .post(url)
             .query(&[("remoting", "false")])
             .basic_auth(&self.cfg.username, Some(&self.cfg.password))
             .header("Content-Type", "application/octet-stream")
@@ -85,7 +83,10 @@ impl Cli {
         let client_output = req.send()?;
         println!("client: {:?}", client_output.bytes());
 
-        println!("server thread: {:?}", server.join().expect("error on server thread"));
+        println!(
+            "server thread: {:?}",
+            server.join().expect("error on server thread")
+        );
         Ok(())
     }
 }
@@ -101,7 +102,7 @@ enum Code {
     Arg = 0,
     Locale = 1,
     Encoding = 2,
-    Start= 3,
+    Start = 3,
     Exit = 4,
     Stdin = 5,
     EndStdin = 6,
@@ -151,7 +152,7 @@ impl Encoder {
     fn op(&mut self, op: Code) -> Result<()> {
         self.frame(&Frame {
             op: op,
-            data: &[0;0],
+            data: &[0; 0],
         })
     }
 
@@ -160,7 +161,7 @@ impl Encoder {
         let mut data = Vec::with_capacity(2 + str_bytes.len());
         data.write(&(str_bytes.len() as u16).to_be_bytes())?;
         data.write(str_bytes)?;
-        self.frame(&Frame{
+        self.frame(&Frame {
             op: op,
             data: &data,
         })
@@ -170,4 +171,3 @@ impl Encoder {
         self.buf.clone()
     }
 }
-

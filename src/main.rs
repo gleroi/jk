@@ -24,7 +24,6 @@ struct Config {
     servers: HashMap<String, jenkins::Server>,
 }
 
-
 fn main() -> Result<()> {
     let opts = Opts::parse();
     let config = read_file("jenkins.toml")?;
