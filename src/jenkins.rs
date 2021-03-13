@@ -35,15 +35,17 @@ impl Cli {
         Ok(builder.build()?)
     }
 
-    pub fn send(&self, args: Vec<String>) -> Result<()> {
+    pub fn send(&self, args: Vec<String>) -> Result<String> {
         use std::sync::{Arc, Barrier};
 
         let uuid = Uuid::new_v4();
+        // - a thread is spawn to read command output, and wait for main thread to be ready
+        // - main thread prepare the command and wait first thread to be ready to listen
         let ready = Arc::new(Barrier::new(2));
 
         let clt_server = self.clone();
         let server_ready = ready.clone();
-        let server = thread::spawn(move || -> Result<()> {
+        let server = thread::spawn(move || -> Result<String> {
             let clt = clt_server.client()?;
             let url = reqwest::Url::parse(&format!("{}/{}", &clt_server.cfg.url, "cli"))?;
             let mut server_output = clt
@@ -53,12 +55,11 @@ impl Cli {
                 .header("Session", format!("{}", &uuid))
                 .header("Side", "download")
                 .send()?;
-            server_ready.wait();
+            server_ready.wait(); // wait for main thread to send the command
             let mut buf: Vec<u8> = Vec::with_capacity(1024);
             server_output.copy_to(&mut buf)?;
             let str = String::from_utf8_lossy(&buf);
-            println!("{}", str);
-            Ok(())
+            Ok(str.to_string())
         });
 
         let clt = self.client()?;
@@ -80,15 +81,10 @@ impl Cli {
         encoder.op(Code::Start)?;
 
         req = req.body(encoder.buffer());
-        ready.wait();
-        let client_output = req.send()?;
-        println!("client: {:?}", client_output.bytes());
+        ready.wait(); // wait for thread to be ready to read the result
+        req.send()?;
 
-        println!(
-            "server thread: {:?}",
-            server.join().expect("error on server thread")
-        );
-        Ok(())
+        Ok(server.join().expect("error on while reading response")?)
     }
 }
 
