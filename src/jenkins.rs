@@ -1,11 +1,9 @@
 use reqwest::blocking;
 use serde::Deserialize;
 use anyhow::{Result, anyhow};
-use std::io::{Write, Read, BufReader};
+use std::io::{Write};
 use std::thread;
 use uuid::Uuid;
-
-use super::utf8;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Server {
@@ -60,7 +58,7 @@ impl Cli {
             server_ready.wait();
             let mut buf : Vec<u8> = Vec::with_capacity(1024);
             server_output.copy_to(&mut buf)?;
-            let str = utf8::from_modified_utf8(&buf)?;
+            let str = String::from_utf8_lossy(&buf);
             println!("{}", str);
             Ok(())
         });
@@ -78,9 +76,9 @@ impl Cli {
         for arg in &args {
             encoder.string(Code::Arg, arg)?;
         }
-        encoder.string(Code::Encoding, "utf-8");
-        encoder.string(Code::Locale, "en-US");
-        encoder.op(Code::Start);
+        encoder.string(Code::Encoding, "UTF-8")?;
+        encoder.string(Code::Locale, "en-US")?;
+        encoder.op(Code::Start)?;
 
         req = req.body(encoder.buffer());
         ready.wait();
@@ -161,7 +159,7 @@ impl Encoder {
         let str_bytes = s.as_bytes();
         let mut data = Vec::with_capacity(2 + str_bytes.len());
         data.write(&(str_bytes.len() as u16).to_be_bytes())?;
-        data.write(str_bytes);
+        data.write(str_bytes)?;
         self.frame(&Frame{
             op: op,
             data: &data,
@@ -173,26 +171,3 @@ impl Encoder {
     }
 }
 
-struct Decoder<'a> {
-    buf: &'a [u8],
-}
-
-impl<'a> Decoder<'a> {
-    fn new(data: &'a [u8]) -> Self {
-        Self {
-            buf: data,
-        }
-    }
-
-    fn frame(&mut self) -> Result<Frame> {
-        use std::convert::TryInto;
-        let len = u32::from_be_bytes((&self.buf[0..4]).try_into()?) as usize;
-        let op = self.buf[4].try_into()?;
-        let data = &self.buf[5..5+len];
-        self.buf = &self.buf[5+len..];
-        Ok(Frame{
-            op: op,
-            data: data,
-        })
-    }
-}

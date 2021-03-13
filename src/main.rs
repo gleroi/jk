@@ -1,15 +1,12 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Result};
 use clap::Clap;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::fs;
-use std::io::{self, Write};
 use std::path::Path;
-use std::process::Command;
 use toml;
 
 mod jenkins;
-mod utf8;
 
 #[derive(Clap)]
 #[clap(version = "0.1", author = "LinkyPilot")]
@@ -42,30 +39,8 @@ fn main() -> Result<()> {
 }
 
 fn run_jenkins(cfg: &jenkins::Server, args: &Vec<String>) -> Result<()> {
-    /*
-    let mut cmd = Command::new("java");
-    cmd.arg("-jar")
-        .arg("c:/Bin/jenkins-cli.jar")
-        .args(&["-s", &cfg.url]);
-
-    if let Some(proxy) = &cfg.proxy {
-        cmd.args(&["-p", &proxy])
-            .env("http_proxy", format!("http://{}", &proxy))
-            .env("https_proxy", format!("http://{}", &proxy))
-            .env("no_proxy", "");
-    }
-    cmd.arg("-noCertificateCheck")
-        .args(&["-auth", &format!("{}:{}", cfg.username, cfg.password)]);
-
-    cmd.args(args);
-    let output = cmd.output()?;
-    io::stdout().write_all(String::from_utf8_lossy(&output.stdout).as_bytes())?;
-    io::stdout().write_all(String::from_utf8_lossy(&output.stderr).as_bytes())?;
-    */
-
     let cli = jenkins::Cli::new(cfg.clone())?;
     cli.send(args.clone())?;
-
     Ok(())
 }
 
