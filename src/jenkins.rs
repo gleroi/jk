@@ -1,6 +1,7 @@
 use anyhow::{anyhow, Result};
 use reqwest::blocking;
 use serde::Deserialize;
+use std::convert::TryFrom;
 use std::io::Write;
 use std::thread;
 use uuid::Uuid;
@@ -109,8 +110,6 @@ enum Code {
     Stdout = 7,
     Stderr = 8,
 }
-
-use std::convert::TryFrom;
 
 impl TryFrom<u8> for Code {
     type Error = anyhow::Error;
