@@ -1,9 +1,11 @@
 use reqwest::blocking;
 use serde::Deserialize;
-use anyhow::Result;
-use std::io::Write;
+use anyhow::{Result, anyhow};
+use std::io::{Write, Read, BufReader};
 use std::thread;
 use uuid::Uuid;
+
+use super::utf8;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Server {
@@ -28,8 +30,7 @@ impl Cli {
     
     fn client(&self) -> Result<blocking::Client> {
         let mut builder = blocking::Client::builder()
-                .connect_timeout(Some(std::time::Duration::from_secs(10)))
-                .connection_verbose(true)
+                .tcp_keepalive(std::time::Duration::from_secs(1))
                 .cookie_store(true)
                 .danger_accept_invalid_certs(true);
         if let Some(proxy) = &self.cfg.proxy {
@@ -40,9 +41,13 @@ impl Cli {
 
 
     pub fn send(&self, args: Vec<String>) -> Result<()> {
+        use std::sync::{Arc, Barrier};
+
         let uuid = Uuid::new_v4();
+        let ready = Arc::new(Barrier::new(2));
 
         let clt_server = self.clone();
+        let server_ready = ready.clone();
         let server = thread::spawn(move || -> Result<()> {
             let clt = clt_server.client()?;
             let url = reqwest::Url::parse(&format!("{}/{}", &clt_server.cfg.url, "cli"))?;
@@ -52,54 +57,48 @@ impl Cli {
                 .header("Session", format!("{}", &uuid))
                 .header("Side", "download")
                 .send()?;
-            // server output ...
+            server_ready.wait();
             let mut buf : Vec<u8> = Vec::with_capacity(1024);
             server_output.copy_to(&mut buf)?;
-            println!("server: {:?}", buf);
+            let str = utf8::from_modified_utf8(&buf)?;
+            println!("{}", str);
             Ok(())
         });
 
-        let clt_client = self.clone();
-        let client = thread::spawn(move || -> Result<()> {
-            let clt = clt_client.client()?;
-            let url = reqwest::Url::parse(&format!("{}/{}", &clt_client.cfg.url, "cli"))?;
-            let mut req = clt.post(url)
-                .query(&[("remoting", "false")])
-                .basic_auth(clt_client.cfg.username, Some(clt_client.cfg.password))
-                .header("Content-Type", "application/octet-stream")
-                .header("Transfer-encoding", "chunked")
-                .header("Session", format!("{}", &uuid))
-                .header("Side", "upload");
-            let mut encoder = Encoder::new();
-            for arg in &args {
-                println!("writing: {}", arg);
-                encoder.string(Code::Arg, arg)?;
-            }
-            encoder.string(Code::Encoding, "utf-8");
-            encoder.string(Code::Locale, "en-US");
-            encoder.op(Code::Start);
+        let clt = self.client()?;
+        let url = reqwest::Url::parse(&format!("{}/{}", &self.cfg.url, "cli"))?;
+        let mut req = clt.post(url)
+            .query(&[("remoting", "false")])
+            .basic_auth(&self.cfg.username, Some(&self.cfg.password))
+            .header("Content-Type", "application/octet-stream")
+            .header("Transfer-encoding", "chunked")
+            .header("Session", format!("{}", &uuid))
+            .header("Side", "upload");
+        let mut encoder = Encoder::new();
+        for arg in &args {
+            encoder.string(Code::Arg, arg)?;
+        }
+        encoder.string(Code::Encoding, "utf-8");
+        encoder.string(Code::Locale, "en-US");
+        encoder.op(Code::Start);
 
-            req = req.body(encoder.buffer());
-            let client_output = req.send()?;
-            println!("client: {:?}", client_output.bytes());
-            Ok(())
-        });
-        println!("client thread: {:?}", client.join().expect("error on client thread"));
+        req = req.body(encoder.buffer());
+        ready.wait();
+        let client_output = req.send()?;
+        println!("client: {:?}", client_output.bytes());
+
         println!("server thread: {:?}", server.join().expect("error on server thread"));
         Ok(())
     }
 }
 
-struct Encoder {
-    buf: Vec<u8>,
-}
-
+#[derive(Debug)]
 struct Frame<'a> {
     op: Code,
     data: &'a [u8],
 }
 
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 enum Code {
     Arg = 0,
     Locale = 1,
@@ -110,6 +109,31 @@ enum Code {
     EndStdin = 6,
     Stdout = 7,
     Stderr = 8,
+}
+
+use std::convert::TryFrom;
+
+impl TryFrom<u8> for Code {
+    type Error = anyhow::Error;
+
+    fn try_from(i: u8) -> Result<Self> {
+        match i {
+            0 => Ok(Code::Arg),
+            1 => Ok(Code::Locale),
+            2 => Ok(Code::Encoding),
+            3 => Ok(Code::Start),
+            4 => Ok(Code::Exit),
+            5 => Ok(Code::Stdin),
+            6 => Ok(Code::EndStdin),
+            7 => Ok(Code::Stdout),
+            8 => Ok(Code::Stderr),
+            _ => Err(anyhow!("Code: unexpected value {}", i)),
+        }
+    }
+}
+
+struct Encoder {
+    buf: Vec<u8>,
 }
 
 impl Encoder {
@@ -134,13 +158,41 @@ impl Encoder {
     }
 
     fn string<'a>(&mut self, op: Code, s: &'a str) -> Result<()> {
+        let str_bytes = s.as_bytes();
+        let mut data = Vec::with_capacity(2 + str_bytes.len());
+        data.write(&(str_bytes.len() as u16).to_be_bytes())?;
+        data.write(str_bytes);
         self.frame(&Frame{
             op: op,
-            data: s.as_bytes(),
+            data: &data,
         })
     }
 
     fn buffer(&self) -> Vec<u8> {
         self.buf.clone()
+    }
+}
+
+struct Decoder<'a> {
+    buf: &'a [u8],
+}
+
+impl<'a> Decoder<'a> {
+    fn new(data: &'a [u8]) -> Self {
+        Self {
+            buf: data,
+        }
+    }
+
+    fn frame(&mut self) -> Result<Frame> {
+        use std::convert::TryInto;
+        let len = u32::from_be_bytes((&self.buf[0..4]).try_into()?) as usize;
+        let op = self.buf[4].try_into()?;
+        let data = &self.buf[5..5+len];
+        self.buf = &self.buf[5+len..];
+        Ok(Frame{
+            op: op,
+            data: data,
+        })
     }
 }

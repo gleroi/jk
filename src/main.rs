@@ -9,6 +9,7 @@ use std::process::Command;
 use toml;
 
 mod jenkins;
+mod utf8;
 
 #[derive(Clap)]
 #[clap(version = "0.1", author = "LinkyPilot")]
