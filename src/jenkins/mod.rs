@@ -8,6 +8,7 @@ use std::thread;
 use tungstenite::client::*;
 use tungstenite::*;
 use uuid::Uuid;
+use pipe::{PipeReader, PipeWriter, pipe};
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Server {
@@ -28,11 +29,22 @@ pub struct Command {
     pub exit_code: i32,
 }
 
+// TODO: transform send() to a Transport http
+
+pub struct Transport {
+    input: PipeReader,
+    output: PipeWriter,
+    out_thread: thread::Thread
+}
+
+// TODO: return in command a pipe, to read the pipe while the transport/thread write to it. and  keep the thread
+// in scope.
+
+
 impl Cli {
     pub fn new(cfg: Server) -> Result<Cli> {
         Ok(Cli { cfg: cfg })
     }
-
     fn client(&self) -> Result<blocking::Client> {
         let mut builder = blocking::Client::builder()
             .tcp_keepalive(std::time::Duration::from_secs(1))
@@ -95,27 +107,29 @@ impl Cli {
             Ok(cmd)
         });
 
-        let clt = self.client()?;
-        let url = reqwest::Url::parse(&format!("{}/{}", &self.cfg.url, "cli"))?;
-        let mut req = clt
-            .post(url)
-            .query(&[("remoting", "false")])
-            .basic_auth(&self.cfg.username, Some(&self.cfg.password))
-            .header("Content-Type", "application/octet-stream")
-            .header("Transfer-encoding", "chunked")
-            .header("Session", format!("{}", &uuid))
-            .header("Side", "upload");
-        let mut encoder = Encoder::new();
-        for arg in &args {
-            encoder.string(Code::Arg, arg)?;
-        }
-        encoder.string(Code::Encoding, "utf-8")?;
-        encoder.string(Code::Locale, "en")?;
-        encoder.op(Code::Start)?;
+        {
+            let clt = self.client()?;
+            let url = reqwest::Url::parse(&format!("{}/{}", &self.cfg.url, "cli"))?;
+            let mut req = clt
+                .post(url)
+                .query(&[("remoting", "false")])
+                .basic_auth(&self.cfg.username, Some(&self.cfg.password))
+                .header("Content-Type", "application/octet-stream")
+                .header("Transfer-encoding", "chunked")
+                .header("Session", format!("{}", &uuid))
+                .header("Side", "upload");
+            let mut encoder = Encoder::new();
+            for arg in &args {
+                encoder.string(Code::Arg, arg)?;
+            }
+            encoder.string(Code::Encoding, "utf-8")?;
+            encoder.string(Code::Locale, "en")?;
+            encoder.op(Code::Start)?;
 
-        req = req.body(encoder.buffer());
-        ready.wait(); // wait for thread to be ready to read the result
-        req.send()?;
+            req = req.body(encoder.buffer());
+            ready.wait(); // wait for thread to be ready to read the result
+            req.send()?;
+        }
 
         Ok(server.join().expect("error on while reading response")?)
     }
@@ -143,14 +157,32 @@ impl Cli {
 
     pub fn sendws(&self, args: &Vec<String>) -> Result<()> {
         let mut ws = self.websocket()?;
-        let mut encoder = Encoder::new();
         for arg in args {
+            let mut encoder = Encoder::new();
             encoder.string(Code::Arg, arg)?;
+            ws.write_message(Message::Binary(encoder.buffer()))?;
         }
-        encoder.string(Code::Encoding, "utf-8")?;
-        encoder.string(Code::Locale, "en")?;
-        encoder.op(Code::Start)?;
-        ws.write_message(Message::Binary(encoder.buffer()))?;
+        {
+            let mut encoder = Encoder::new();
+            encoder.string(Code::Encoding, "utf-8")?;
+            ws.write_message(Message::Binary(encoder.buffer()))?;
+        }
+        {
+            let mut encoder = Encoder::new();
+            encoder.string(Code::Locale, "en")?;
+            ws.write_message(Message::Binary(encoder.buffer()))?;
+        }
+        {
+            let mut encoder = Encoder::new();
+            encoder.op(Code::Start)?;
+            ws.write_message(Message::Binary(encoder.buffer()))?;
+        }
+        {
+            let mut encoder = Encoder::new();
+            encoder.op(Code::Stdin)?;
+            ws.write_message(Message::Binary(encoder.buffer()))?;
+        }
+        ws.write_pending()?;
         loop {
             let resp = ws.read_message()?;
             match resp {
