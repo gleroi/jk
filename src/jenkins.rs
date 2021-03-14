@@ -7,6 +7,7 @@ use std::convert::TryFrom;
 use std::io::Write;
 use std::thread;
 use uuid::Uuid;
+use std::convert::TryInto;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Server {
@@ -19,6 +20,12 @@ pub struct Server {
 #[derive(Clone)]
 pub struct Cli {
     cfg: Server,
+}
+
+pub struct Command {
+    pub out: Vec<u8>,
+    pub err: Vec<u8>,
+    pub exit_code: i32,
 }
 
 impl Cli {
@@ -37,7 +44,7 @@ impl Cli {
         Ok(builder.build()?)
     }
 
-    pub fn send(&self, args: Vec<String>) -> Result<String> {
+    pub fn send(&self, args: Vec<String>) -> Result<Command> {
         use std::sync::{Arc, Barrier};
 
         let uuid = Uuid::new_v4();
@@ -47,7 +54,7 @@ impl Cli {
 
         let clt_server = self.clone();
         let server_ready = ready.clone();
-        let server = thread::spawn(move || -> Result<String> {
+        let server = thread::spawn(move || -> Result<Command> {
             let clt = clt_server.client()?;
             let url = reqwest::Url::parse(&format!("{}/{}", &clt_server.cfg.url, "cli"))?;
             let mut server_output = clt
@@ -60,8 +67,32 @@ impl Cli {
             server_ready.wait(); // wait for main thread to send the command
             let mut buf: Vec<u8> = Vec::with_capacity(1024);
             server_output.copy_to(&mut buf)?;
-            let str = String::from_utf8_lossy(&buf);
-            Ok(str.to_string())
+            let mut decoder = Decoder { buf: &buf[1..] };
+            let mut cmd = Command {
+                out: Vec::with_capacity(buf.len()),
+                err: Vec::with_capacity(buf.len()),
+                exit_code: 0,
+            };
+            loop {
+                let maybe_frame = decoder.frame()?;
+                if let Some(f) = maybe_frame {
+                    match &f.op {
+                        Code::Stderr => {
+                            cmd.err.write_all(&f.data)?;
+                        },
+                        Code::Stdout => {
+                            cmd.out.write_all(&f.data)?;
+                        },
+                        Code::Exit => {
+                            cmd.exit_code = i32::from_be_bytes(f.data.try_into()?);
+                        }
+                        _ => println!("{:?}", f),
+                    }
+                } else {
+                    break;
+                }
+            }
+            Ok(cmd)
         });
 
         let clt = self.client()?;
@@ -206,5 +237,26 @@ impl Encoder {
 
     fn buffer(&self) -> Vec<u8> {
         self.buf.clone()
+    }
+}
+
+struct Decoder<'a> {
+    buf: &'a [u8],
+}
+
+impl Decoder<'_> {
+    fn frame(&mut self) -> Result<Option<Frame>> {
+        if self.buf.len() < 4 {
+            return Ok(None);
+        }
+        let len = u32::from_be_bytes(self.buf[0..4].try_into()?) as usize;
+        let op = self.buf[4].try_into()?;
+        let data = &self.buf[5..5+len];
+        if 5+len >= self.buf.len() {
+            self.buf = &[0;0]
+        } else {
+            self.buf = &self.buf[5+len..];
+        }
+        Ok(Some(Frame{op: op, data: data}))
     }
 }
