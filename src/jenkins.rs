@@ -1,13 +1,13 @@
 use anyhow::{anyhow, Result};
 use reqwest::blocking;
-use tungstenite::*;
-use tungstenite::client::*;
 use serde::Deserialize;
 use std::convert::TryFrom;
+use std::convert::TryInto;
 use std::io::Write;
 use std::thread;
+use tungstenite::client::*;
+use tungstenite::*;
 use uuid::Uuid;
-use std::convert::TryInto;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Server {
@@ -79,10 +79,10 @@ impl Cli {
                     match &f.op {
                         Code::Stderr => {
                             cmd.err.write_all(&f.data)?;
-                        },
+                        }
                         Code::Stdout => {
                             cmd.out.write_all(&f.data)?;
-                        },
+                        }
                         Code::Exit => {
                             cmd.exit_code = i32::from_be_bytes(f.data.try_into()?);
                         }
@@ -125,7 +125,13 @@ impl Cli {
         url.set_scheme("ws").unwrap();
         let req = handshake::client::Request::builder()
             .uri(url.to_string())
-            .header("Authorization", format!("Basic {}", base64::encode(format!("{}:{}", &self.cfg.username, &self.cfg.password))))
+            .header(
+                "Authorization",
+                format!(
+                    "Basic {}",
+                    base64::encode(format!("{}:{}", &self.cfg.username, &self.cfg.password))
+                ),
+            )
             .body(())?;
         let (ws, resp) = client::connect(req)?;
         if resp.status().is_client_error() || resp.status().is_server_error() {
@@ -153,12 +159,11 @@ impl Cli {
                 Message::Ping(ref data) => {
                     println!("expected: {:?}", resp);
                     ws.write_message(Message::Pong(data.to_vec()))?;
-                },
+                }
                 _ => println!("unexpected: {:?}", resp),
             }
         }
     }
-
 }
 
 #[derive(Debug)]
@@ -251,12 +256,12 @@ impl Decoder<'_> {
         }
         let len = u32::from_be_bytes(self.buf[0..4].try_into()?) as usize;
         let op = self.buf[4].try_into()?;
-        let data = &self.buf[5..5+len];
-        if 5+len >= self.buf.len() {
-            self.buf = &[0;0]
+        let data = &self.buf[5..5 + len];
+        if 5 + len >= self.buf.len() {
+            self.buf = &[0; 0]
         } else {
-            self.buf = &self.buf[5+len..];
+            self.buf = &self.buf[5 + len..];
         }
-        Ok(Some(Frame{op: op, data: data}))
+        Ok(Some(Frame { op: op, data: data }))
     }
 }
