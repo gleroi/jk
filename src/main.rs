@@ -40,7 +40,6 @@ fn main() -> Result<()> {
 fn run_jenkins(cfg: &jenkins::Server, args: &Vec<String>) -> Result<()> {
     let cli = jenkins::Cli::new(cfg.clone())?;
     let result = cli.send(args.clone())?;
-    //let output = cli.sendws(args)?;
     println!("{}", String::from_utf8(result.out)?);
     println!("--");
     println!("{}", String::from_utf8(result.err)?);
