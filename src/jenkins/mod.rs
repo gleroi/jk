@@ -1,14 +1,15 @@
-use anyhow::{anyhow, Context, Result};
-use pipe::{pipe, PipeReader, PipeWriter};
+use anyhow::{anyhow, Result};
+use pipe::{PipeReader, PipeWriter};
 use reqwest::blocking;
 use serde::Deserialize;
 use std::convert::TryFrom;
 use std::convert::TryInto;
 use std::io::Write;
+use std::sync::{Arc, Barrier};
 use std::thread;
-use tungstenite::client::*;
-use tungstenite::*;
 use uuid::Uuid;
+
+mod http;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Server {
@@ -43,6 +44,7 @@ impl Cli {
     pub fn new(cfg: Server) -> Result<Cli> {
         Ok(Cli { cfg: cfg })
     }
+
     fn client(&self) -> Result<blocking::Client> {
         let mut builder = blocking::Client::builder()
             .tcp_keepalive(std::time::Duration::from_secs(1))
@@ -56,58 +58,13 @@ impl Cli {
     }
 
     pub fn send(&self, args: Vec<String>) -> Result<Command> {
-        use std::sync::{Arc, Barrier};
-
-        let uuid = Uuid::new_v4();
-        let (mut output, mut input) = pipe::pipe();
-
         // - a thread is spawn to read command output, and wait for main thread to be ready
         // - main thread prepare the command and wait first thread to be ready to listen
         let ready = Arc::new(Barrier::new(2));
 
-        let clt_server = self.clone();
-        let server_ready = ready.clone();
-        let server = thread::spawn(move || -> Result<()> {
-            let clt = clt_server.client()?;
-            let url = reqwest::Url::parse(&format!("{}/{}", &clt_server.cfg.url, "cli"))?;
-            let mut server_output = clt
-                .post(url)
-                .query(&[("remoting", "false")])
-                .basic_auth(clt_server.cfg.username, Some(clt_server.cfg.password))
-                .header("Session", format!("{}", &uuid))
-                .header("Side", "download")
-                .send()?;
-            server_ready.wait(); // wait for main thread to send the command
-            server_output.copy_to(&mut input)?;
-            input.flush()?;
-            Ok(())
-        });
-
-        let clt_client = self.clone();
-        let client = thread::spawn(move || -> Result<()> {
-            let clt = clt_client.client()?;
-            let url = reqwest::Url::parse(&format!("{}/{}", &clt_client.cfg.url, "cli"))?;
-            let mut req = clt
-                .post(url)
-                .query(&[("remoting", "false")])
-                .basic_auth(&clt_client.cfg.username, Some(&clt_client.cfg.password))
-                .header("Content-Type", "application/octet-stream")
-                .header("Transfer-encoding", "chunked")
-                .header("Session", format!("{}", &uuid))
-                .header("Side", "upload");
-            let mut encoder = Encoder::new();
-            for arg in &args {
-                encoder.string(Code::Arg, arg)?;
-            }
-            encoder.string(Code::Encoding, "utf-8")?;
-            encoder.string(Code::Locale, "en")?;
-            encoder.op(Code::Start)?;
-
-            req = req.body(encoder.buffer());
-            ready.wait(); // wait for thread to be ready to read the result
-            req.send().with_context(|| "while sending request... ")?;
-            Ok(())
-        });
+        let uuid = Uuid::new_v4();
+        let (server, mut output) = http::recv(self.clone(), uuid, ready.clone())?;
+        let client = http::send(self.clone(), uuid, ready, args)?;
 
         let mut decoder = Decoder { r: &mut output };
         let mut cmd = Command {
