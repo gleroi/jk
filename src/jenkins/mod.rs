@@ -92,6 +92,8 @@ impl Cli {
     }
 }
 
+//TODO: split Frame & code in ServerFrame/ClientFrame
+
 #[derive(Debug)]
 struct Frame {
     op: Code,
