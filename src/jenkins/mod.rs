@@ -1,4 +1,5 @@
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
+use pipe::{pipe, PipeReader, PipeWriter};
 use reqwest::blocking;
 use serde::Deserialize;
 use std::convert::TryFrom;
@@ -8,7 +9,6 @@ use std::thread;
 use tungstenite::client::*;
 use tungstenite::*;
 use uuid::Uuid;
-use pipe::{PipeReader, PipeWriter, pipe};
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Server {
@@ -25,7 +25,6 @@ pub struct Cli {
 
 pub struct Command {
     pub out: Vec<u8>,
-    pub err: Vec<u8>,
     pub exit_code: i32,
 }
 
@@ -34,12 +33,11 @@ pub struct Command {
 pub struct Transport {
     input: PipeReader,
     output: PipeWriter,
-    out_thread: thread::Thread
+    out_thread: thread::Thread,
 }
 
 // TODO: return in command a pipe, to read the pipe while the transport/thread write to it. and  keep the thread
 // in scope.
-
 
 impl Cli {
     pub fn new(cfg: Server) -> Result<Cli> {
@@ -48,6 +46,7 @@ impl Cli {
     fn client(&self) -> Result<blocking::Client> {
         let mut builder = blocking::Client::builder()
             .tcp_keepalive(std::time::Duration::from_secs(1))
+            .timeout(None)
             .cookie_store(true)
             .danger_accept_invalid_certs(true);
         if let Some(proxy) = &self.cfg.proxy {
@@ -60,13 +59,15 @@ impl Cli {
         use std::sync::{Arc, Barrier};
 
         let uuid = Uuid::new_v4();
+        let (mut output, mut input) = pipe::pipe();
+
         // - a thread is spawn to read command output, and wait for main thread to be ready
         // - main thread prepare the command and wait first thread to be ready to listen
         let ready = Arc::new(Barrier::new(2));
 
         let clt_server = self.clone();
         let server_ready = ready.clone();
-        let server = thread::spawn(move || -> Result<Command> {
+        let server = thread::spawn(move || -> Result<()> {
             let clt = clt_server.client()?;
             let url = reqwest::Url::parse(&format!("{}/{}", &clt_server.cfg.url, "cli"))?;
             let mut server_output = clt
@@ -77,43 +78,19 @@ impl Cli {
                 .header("Side", "download")
                 .send()?;
             server_ready.wait(); // wait for main thread to send the command
-            let mut buf: Vec<u8> = Vec::with_capacity(1024);
-            server_output.copy_to(&mut buf)?;
-            let mut decoder = Decoder { buf: &buf[1..] };
-            let mut cmd = Command {
-                out: Vec::with_capacity(buf.len()),
-                err: Vec::with_capacity(buf.len()),
-                exit_code: 0,
-            };
-            loop {
-                let maybe_frame = decoder.frame()?;
-                if let Some(f) = maybe_frame {
-                    match &f.op {
-                        Code::Stderr => {
-                            cmd.err.write_all(&f.data)?;
-                        }
-                        Code::Stdout => {
-                            cmd.out.write_all(&f.data)?;
-                        }
-                        Code::Exit => {
-                            cmd.exit_code = i32::from_be_bytes(f.data.try_into()?);
-                        }
-                        _ => println!("{:?}", f),
-                    }
-                } else {
-                    break;
-                }
-            }
-            Ok(cmd)
+            server_output.copy_to(&mut input)?;
+            input.flush()?;
+            Ok(())
         });
 
-        {
-            let clt = self.client()?;
-            let url = reqwest::Url::parse(&format!("{}/{}", &self.cfg.url, "cli"))?;
+        let clt_client = self.clone();
+        let client = thread::spawn(move || -> Result<()> {
+            let clt = clt_client.client()?;
+            let url = reqwest::Url::parse(&format!("{}/{}", &clt_client.cfg.url, "cli"))?;
             let mut req = clt
                 .post(url)
                 .query(&[("remoting", "false")])
-                .basic_auth(&self.cfg.username, Some(&self.cfg.password))
+                .basic_auth(&clt_client.cfg.username, Some(&clt_client.cfg.password))
                 .header("Content-Type", "application/octet-stream")
                 .header("Transfer-encoding", "chunked")
                 .header("Session", format!("{}", &uuid))
@@ -128,80 +105,48 @@ impl Cli {
 
             req = req.body(encoder.buffer());
             ready.wait(); // wait for thread to be ready to read the result
-            req.send()?;
-        }
+            req.send().with_context(|| "while sending request... ")?;
+            Ok(())
+        });
 
-        Ok(server.join().expect("error on while reading response")?)
-    }
-
-    fn websocket(&self) -> Result<WebSocket<AutoStream>> {
-        let mut url = reqwest::Url::parse(&format!("{}/{}", &self.cfg.url, "cli/ws"))?;
-        url.set_scheme("ws").unwrap();
-        let req = handshake::client::Request::builder()
-            .uri(url.to_string())
-            .header(
-                "Authorization",
-                format!(
-                    "Basic {}",
-                    base64::encode(format!("{}:{}", &self.cfg.username, &self.cfg.password))
-                ),
-            )
-            .body(())?;
-        let (ws, resp) = client::connect(req)?;
-        if resp.status().is_client_error() || resp.status().is_server_error() {
-            Err(anyhow!("error while establishing ws: {}", resp.status()))
-        } else {
-            Ok(ws)
-        }
-    }
-
-    pub fn sendws(&self, args: &Vec<String>) -> Result<()> {
-        let mut ws = self.websocket()?;
-        for arg in args {
-            let mut encoder = Encoder::new();
-            encoder.string(Code::Arg, arg)?;
-            ws.write_message(Message::Binary(encoder.buffer()))?;
-        }
-        {
-            let mut encoder = Encoder::new();
-            encoder.string(Code::Encoding, "utf-8")?;
-            ws.write_message(Message::Binary(encoder.buffer()))?;
-        }
-        {
-            let mut encoder = Encoder::new();
-            encoder.string(Code::Locale, "en")?;
-            ws.write_message(Message::Binary(encoder.buffer()))?;
-        }
-        {
-            let mut encoder = Encoder::new();
-            encoder.op(Code::Start)?;
-            ws.write_message(Message::Binary(encoder.buffer()))?;
-        }
-        {
-            let mut encoder = Encoder::new();
-            encoder.op(Code::Stdin)?;
-            ws.write_message(Message::Binary(encoder.buffer()))?;
-        }
-        ws.write_pending()?;
+        let mut decoder = Decoder { r: &mut output };
+        let mut cmd = Command {
+            out: Vec::with_capacity(1024),
+            exit_code: 0,
+        };
+        decoder.skip_initial_zero()?;
         loop {
-            let resp = ws.read_message()?;
-            match resp {
-                Message::Text(str) => println!("{}", str),
-                Message::Binary(data) => println!("{}", String::from_utf8_lossy(&data)),
-                Message::Ping(ref data) => {
-                    println!("expected: {:?}", resp);
-                    ws.write_message(Message::Pong(data.to_vec()))?;
+            let maybe_frame = decoder.frame()?;
+            if let Some(f) = maybe_frame {
+                match &f.op {
+                    Code::Stderr => {
+                        std::io::stdout().write_all(&f.data)?;
+                        std::io::stdout().flush()?;
+                    }
+                    Code::Stdout => {
+                        std::io::stdout().write_all(&f.data)?;
+                        std::io::stdout().flush()?;
+                    }
+                    Code::Exit => {
+                        cmd.exit_code = i32::from_be_bytes(f.data[0..4].try_into()?);
+                        break;
+                    }
+                    _ => println!("{:?}", f),
                 }
-                _ => println!("unexpected: {:?}", resp),
+            } else {
+                break;
             }
         }
+        server.join().expect("error while reading response")?;
+        client.join().expect("error while sending request")?;
+        Ok(cmd)
     }
 }
 
 #[derive(Debug)]
-struct Frame<'a> {
+struct Frame {
     op: Code,
-    data: &'a [u8],
+    data: Vec<u8>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -250,14 +195,14 @@ impl Encoder {
     fn frame(&mut self, f: &Frame) -> Result<()> {
         self.buf.write(&(f.data.len() as u32).to_be_bytes())?;
         self.buf.write(&(f.op as u8).to_be_bytes())?;
-        self.buf.write(f.data)?;
+        self.buf.write(&f.data)?;
         Ok(())
     }
 
     fn op(&mut self, op: Code) -> Result<()> {
         self.frame(&Frame {
             op: op,
-            data: &[0; 0],
+            data: Vec::new(),
         })
     }
 
@@ -266,10 +211,7 @@ impl Encoder {
         let mut data = Vec::with_capacity(2 + str_bytes.len());
         data.write(&(str_bytes.len() as u16).to_be_bytes())?;
         data.write(str_bytes)?;
-        self.frame(&Frame {
-            op: op,
-            data: &data,
-        })
+        self.frame(&Frame { op: op, data: data })
     }
 
     fn buffer(&self) -> Vec<u8> {
@@ -277,23 +219,29 @@ impl Encoder {
     }
 }
 
-struct Decoder<'a> {
-    buf: &'a [u8],
+struct Decoder<'a, T: std::io::Read> {
+    r: &'a mut T,
 }
 
-impl Decoder<'_> {
+impl<T: std::io::Read> Decoder<'_, T> {
+    fn skip_initial_zero(&mut self) -> Result<()> {
+        let mut buf: [u8; 1] = [42; 1];
+        self.r.read_exact(&mut buf)?;
+        assert_eq!(buf[0], 0);
+        Ok(())
+    }
+
     fn frame(&mut self) -> Result<Option<Frame>> {
-        if self.buf.len() < 4 {
-            return Ok(None);
-        }
-        let len = u32::from_be_bytes(self.buf[0..4].try_into()?) as usize;
-        let op = self.buf[4].try_into()?;
-        let data = &self.buf[5..5 + len];
-        if 5 + len >= self.buf.len() {
-            self.buf = &[0; 0]
-        } else {
-            self.buf = &self.buf[5 + len..];
-        }
+        let mut buf = [0; 4];
+        self.r.read_exact(&mut buf)?;
+        let len = u32::from_be_bytes(buf) as usize;
+
+        self.r.read_exact(&mut buf[0..1])?;
+        let op = buf[0].try_into()?;
+
+        let mut data = Vec::with_capacity(len);
+        data.resize(len, 0);
+        self.r.read_exact(&mut data)?;
         Ok(Some(Frame { op: op, data: data }))
     }
 }
