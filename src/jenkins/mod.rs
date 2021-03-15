@@ -10,6 +10,7 @@ use std::thread;
 use uuid::Uuid;
 
 mod http;
+mod websocket;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Server {

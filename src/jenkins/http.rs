@@ -1,11 +1,10 @@
+use super::{Cli, Code, Encoder};
 use anyhow::{Context, Result};
 use pipe::PipeReader;
 use std::io::Write;
 use std::sync::{Arc, Barrier};
 use std::thread;
 use uuid::Uuid;
-
-use super::{Cli, Code, Encoder};
 
 pub fn recv(
     clt_server: Cli,
