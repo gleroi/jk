@@ -1,16 +1,16 @@
-use super::{Cli, Code, Encoder};
+use super::Cli;
 use anyhow::{Context, Result};
-use pipe::{PipeReader, PipeWriter};
+use pipe::{pipe, PipeReader, PipeWriter};
 use std::io::{Read, Write};
 use std::sync::{Arc, Barrier};
 use std::thread;
 use uuid::Uuid;
 
 pub struct Transport {
-    server_thread: thread::JoinHandle<Result<()>>,
+    _server_thread: thread::JoinHandle<Result<()>>,
     server_output: PipeReader,
-    
-    client_thread: thread::JoinHandle<Result<()>>,
+
+    _client_thread: thread::JoinHandle<Result<()>>,
     client_input: PipeWriter,
 }
 
@@ -23,11 +23,20 @@ impl Transport {
         let (server, output) = recv(clt.clone(), uuid, ready.clone())?;
         let (client, input) = send(clt.clone(), uuid, ready)?;
         Ok(Transport {
-            server_thread: server,
+            _server_thread: server,
             server_output: output,
-            client_thread: client,
+            _client_thread: client,
             client_input: input,
         })
+    }
+
+    pub fn close_input(&mut self) {
+        // try close input so that client_thread leave bytes()
+        // by replacing it, it should drop the previous one
+        // then output is drop and should close the new input too
+        // it's ugly, but could not find an another way to do it :'(
+        let (_output, input) = pipe();
+        self.client_input = input;
     }
 }
 
@@ -64,7 +73,6 @@ pub fn recv(
             .header("Session", format!("{}", &uuid))
             .header("Side", "download")
             .send()?;
-        println!("ready to receive server response");
         server_ready.wait(); // wait for main thread to send the command
         server_output.copy_to(&mut input)?;
         input.flush()?;
@@ -78,7 +86,7 @@ pub fn send(
     uuid: Uuid,
     ready: Arc<Barrier>,
 ) -> Result<(thread::JoinHandle<Result<()>>, PipeWriter)> {
-    let (mut output, input) = pipe::pipe();
+    let (output, input) = pipe::pipe();
 
     let client = thread::spawn(move || -> Result<()> {
         let clt = clt_client.client()?;
@@ -96,9 +104,10 @@ pub fn send(
         // - bytes() return a Iterator of Result,
         // - Result implements FromIterator trait
         // - which collect() calls to produce a value from its input
-        let input = output.bytes().collect::<Result<Vec<u8>, std::io::Error>>()?;
+        let input = output
+            .bytes()
+            .collect::<Result<Vec<u8>, std::io::Error>>()?;
         req = req.body(input);
-        println!("ready to send request");
         ready.wait(); // wait for thread to be ready to read the result
         req.send().with_context(|| "while sending request... ")?;
         Ok(())

@@ -1,13 +1,9 @@
 use anyhow::{anyhow, Result};
-use pipe::{PipeReader, PipeWriter};
 use reqwest::blocking;
 use serde::Deserialize;
 use std::convert::TryFrom;
 use std::convert::TryInto;
 use std::io::Write;
-use std::sync::{Arc, Barrier};
-use std::thread;
-use uuid::Uuid;
 
 mod http;
 mod websocket;
@@ -29,7 +25,6 @@ pub struct Command {
     pub out: Vec<u8>,
     pub exit_code: i32,
 }
-
 
 // TODO: return in command a pipe, to read the pipe while the transport/thread write to it. and  keep the thread
 // in scope.
@@ -61,10 +56,9 @@ impl Cli {
         encoder.string(Code::Encoding, "utf-8")?;
         encoder.string(Code::Locale, "en")?;
         encoder.op(Code::Start)?;
-        println!("write request to http transport");
         transport.write_all(&encoder.buffer())?;
-        println!("flush request to http transport");
         transport.flush()?;
+        transport.close_input();
 
         let mut decoder = Decoder { r: &mut transport };
         let mut cmd = Command {
