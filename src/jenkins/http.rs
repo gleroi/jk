@@ -1,10 +1,51 @@
 use super::{Cli, Code, Encoder};
 use anyhow::{Context, Result};
-use pipe::PipeReader;
-use std::io::Write;
+use pipe::{PipeReader, PipeWriter};
+use std::io::{Read, Write};
 use std::sync::{Arc, Barrier};
 use std::thread;
 use uuid::Uuid;
+
+pub struct Transport {
+    server_thread: thread::JoinHandle<Result<()>>,
+    server_output: PipeReader,
+    
+    client_thread: thread::JoinHandle<Result<()>>,
+    client_input: PipeWriter,
+}
+
+impl Transport {
+    pub fn new(clt: &Cli) -> Result<Transport> {
+        // - a thread is spawn to read command output, and wait for main thread to be ready
+        // - main thread prepare the command and wait first thread to be ready to listen
+        let ready = Arc::new(Barrier::new(2));
+        let uuid = Uuid::new_v4();
+        let (server, output) = recv(clt.clone(), uuid, ready.clone())?;
+        let (client, input) = send(clt.clone(), uuid, ready)?;
+        Ok(Transport {
+            server_thread: server,
+            server_output: output,
+            client_thread: client,
+            client_input: input,
+        })
+    }
+}
+
+impl std::io::Write for Transport {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.client_input.write(buf)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.client_input.flush()
+    }
+}
+
+impl std::io::Read for Transport {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        self.server_output.read(buf)
+    }
+}
 
 pub fn recv(
     clt_server: Cli,
@@ -23,6 +64,7 @@ pub fn recv(
             .header("Session", format!("{}", &uuid))
             .header("Side", "download")
             .send()?;
+        println!("ready to receive server response");
         server_ready.wait(); // wait for main thread to send the command
         server_output.copy_to(&mut input)?;
         input.flush()?;
@@ -35,8 +77,9 @@ pub fn send(
     clt_client: Cli,
     uuid: Uuid,
     ready: Arc<Barrier>,
-    args: Vec<String>,
-) -> Result<thread::JoinHandle<Result<()>>> {
+) -> Result<(thread::JoinHandle<Result<()>>, PipeWriter)> {
+    let (mut output, input) = pipe::pipe();
+
     let client = thread::spawn(move || -> Result<()> {
         let clt = clt_client.client()?;
         let url = reqwest::Url::parse(&format!("{}/{}", &clt_client.cfg.url, "cli"))?;
@@ -48,18 +91,17 @@ pub fn send(
             .header("Transfer-encoding", "chunked")
             .header("Session", format!("{}", &uuid))
             .header("Side", "upload");
-        let mut encoder = Encoder::new();
-        for arg in &args {
-            encoder.string(Code::Arg, arg)?;
-        }
-        encoder.string(Code::Encoding, "utf-8")?;
-        encoder.string(Code::Locale, "en")?;
-        encoder.op(Code::Start)?;
 
-        req = req.body(encoder.buffer());
+        // this works because:
+        // - bytes() return a Iterator of Result,
+        // - Result implements FromIterator trait
+        // - which collect() calls to produce a value from its input
+        let input = output.bytes().collect::<Result<Vec<u8>, std::io::Error>>()?;
+        req = req.body(input);
+        println!("ready to send request");
         ready.wait(); // wait for thread to be ready to read the result
         req.send().with_context(|| "while sending request... ")?;
         Ok(())
     });
-    Ok(client)
+    Ok((client, input))
 }

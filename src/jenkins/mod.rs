@@ -30,13 +30,6 @@ pub struct Command {
     pub exit_code: i32,
 }
 
-// TODO: transform send() to a Transport http
-
-pub struct Transport {
-    input: PipeReader,
-    output: PipeWriter,
-    out_thread: thread::Thread,
-}
 
 // TODO: return in command a pipe, to read the pipe while the transport/thread write to it. and  keep the thread
 // in scope.
@@ -59,15 +52,21 @@ impl Cli {
     }
 
     pub fn send(&self, args: Vec<String>) -> Result<Command> {
-        // - a thread is spawn to read command output, and wait for main thread to be ready
-        // - main thread prepare the command and wait first thread to be ready to listen
-        let ready = Arc::new(Barrier::new(2));
+        let mut transport = http::Transport::new(self)?;
 
-        let uuid = Uuid::new_v4();
-        let (server, mut output) = http::recv(self.clone(), uuid, ready.clone())?;
-        let client = http::send(self.clone(), uuid, ready, args)?;
+        let mut encoder = Encoder::new();
+        for arg in &args {
+            encoder.string(Code::Arg, arg)?;
+        }
+        encoder.string(Code::Encoding, "utf-8")?;
+        encoder.string(Code::Locale, "en")?;
+        encoder.op(Code::Start)?;
+        println!("write request to http transport");
+        transport.write_all(&encoder.buffer())?;
+        println!("flush request to http transport");
+        transport.flush()?;
 
-        let mut decoder = Decoder { r: &mut output };
+        let mut decoder = Decoder { r: &mut transport };
         let mut cmd = Command {
             out: Vec::with_capacity(1024),
             exit_code: 0,
@@ -95,8 +94,6 @@ impl Cli {
                 break;
             }
         }
-        server.join().expect("error while reading response")?;
-        client.join().expect("error while sending request")?;
         Ok(cmd)
     }
 }
