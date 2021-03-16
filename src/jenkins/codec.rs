@@ -3,8 +3,6 @@ use anyhow::Result;
 use std::convert::TryInto;
 use std::io::Write;
 
-//TODO: split Frame & code in ServerFrame/ClientFrame
-
 pub struct Encoder {
     buf: Vec<u8>,
 }
