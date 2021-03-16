@@ -22,7 +22,7 @@ impl<T: std::io::Write> Encoder<'_, T> {
     pub fn op(&mut self, op: Code) -> Result<()> {
         self.frame(&Frame {
             op,
-            data: Vec::new(),
+            data: vec![0; 0],
         })
     }
 

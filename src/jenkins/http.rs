@@ -58,8 +58,18 @@ impl std::io::Read for Transport {
 
 impl Drop for Transport {
     fn drop(&mut self) {
-        self.server_thread.take().unwrap().join().unwrap().expect("error in server thread");
-        self.client_thread.take().unwrap().join().unwrap().expect("error in client thread");
+        self.server_thread
+            .take()
+            .unwrap()
+            .join()
+            .unwrap()
+            .expect("error in server thread");
+        self.client_thread
+            .take()
+            .unwrap()
+            .join()
+            .unwrap()
+            .expect("error in client thread");
     }
 }
 
