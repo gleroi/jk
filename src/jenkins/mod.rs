@@ -1,9 +1,11 @@
 use anyhow::{anyhow, Result};
 use reqwest::blocking;
 use serde::Deserialize;
+use pipe::{pipe, PipeReader};
 use std::convert::TryFrom;
 use std::convert::TryInto;
-use std::io::Write;
+use std::io::{Read, Write};
+use std::thread;
 
 mod http;
 mod websocket;
@@ -21,9 +23,22 @@ pub struct Cli {
     cfg: Server,
 }
 
-pub struct Command {
-    pub out: Vec<u8>,
-    pub exit_code: i32,
+pub struct Response {
+    output: PipeReader,
+    decode_thread: thread::JoinHandle<Result<i32>>,
+}
+
+impl Response {
+    pub fn output(&mut self) -> &mut impl Read {
+        return &mut self.output;
+    }
+
+    pub fn wait_exit_code(self) -> Result<i32> {
+        match self.decode_thread.join() {
+            Ok(code) => Ok(code?),
+            Err(err) => Err(anyhow!("error in decoding thread: {:?}", err))
+        }
+    }
 }
 
 // TODO: return in command a pipe, to read the pipe while the transport/thread write to it. and  keep the thread
@@ -46,7 +61,7 @@ impl Cli {
         Ok(builder.build()?)
     }
 
-    pub fn send(&self, args: Vec<String>) -> Result<Command> {
+    pub fn send(&self, args: Vec<String>) -> Result<Response> {
         let mut transport = http::Transport::new(self)?;
 
         let mut encoder = Encoder::new();
@@ -60,35 +75,34 @@ impl Cli {
         transport.flush()?;
         transport.close_input();
 
-        let mut decoder = Decoder { r: &mut transport };
-        let mut cmd = Command {
-            out: Vec::with_capacity(1024),
-            exit_code: 0,
-        };
-        decoder.skip_initial_zero()?;
-        loop {
-            let maybe_frame = decoder.frame()?;
-            if let Some(f) = maybe_frame {
+        let (output, mut input) = pipe();
+        let decode_thread = thread::spawn(move || -> Result<i32> {
+            let mut decoder = Decoder { r: &mut transport };
+            decoder.skip_initial_zero()?;
+            loop {
+                let f = decoder.frame()?;
                 match &f.op {
                     Code::Stderr => {
-                        std::io::stdout().write_all(&f.data)?;
-                        std::io::stdout().flush()?;
+                        input.write_all(&f.data)?;
+                        input.flush()?;
                     }
                     Code::Stdout => {
-                        std::io::stdout().write_all(&f.data)?;
-                        std::io::stdout().flush()?;
+                        input.write_all(&f.data)?;
+                        input.flush()?;
                     }
                     Code::Exit => {
-                        cmd.exit_code = i32::from_be_bytes(f.data[0..4].try_into()?);
-                        break;
+                        drop(input);
+                        let exit_code = i32::from_be_bytes(f.data[0..4].try_into()?);
+                        return Ok(exit_code);
                     }
-                    _ => println!("{:?}", f),
+                    _ => println!("unexpected {:?}", f),
                 }
-            } else {
-                break;
             }
-        }
-        Ok(cmd)
+        });
+        Ok(Response {
+            output,
+            decode_thread,
+        })
     }
 }
 
@@ -182,7 +196,7 @@ impl<T: std::io::Read> Decoder<'_, T> {
         Ok(())
     }
 
-    fn frame(&mut self) -> Result<Option<Frame>> {
+    fn frame(&mut self) -> Result<Frame> {
         let mut buf = [0; 4];
         self.r.read_exact(&mut buf)?;
         let len = u32::from_be_bytes(buf) as usize;
@@ -193,6 +207,6 @@ impl<T: std::io::Read> Decoder<'_, T> {
         let mut data = Vec::with_capacity(len);
         data.resize(len, 0);
         self.r.read_exact(&mut data)?;
-        Ok(Some(Frame { op: op, data: data }))
+        Ok(Frame { op: op, data: data })
     }
 }

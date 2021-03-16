@@ -34,15 +34,15 @@ fn main() -> Result<()> {
         .get(&server)
         .ok_or(anyhow!("no server {} found", server))?;
 
-    Ok(run_jenkins(cfg, &opts.args)?)
+    let code = run_jenkins(cfg, &opts.args)?;
+    std::process::exit(code);
 }
 
-fn run_jenkins(cfg: &jenkins::Server, args: &Vec<String>) -> Result<()> {
+fn run_jenkins(cfg: &jenkins::Server, args: &Vec<String>) -> Result<i32> {
     let cli = jenkins::Cli::new(cfg.clone())?;
-    let result = cli.send(args.clone())?;
-    println!("{}", String::from_utf8(result.out)?);
-    //cli.sendws(args)?;
-    Ok(())
+    let mut resp = cli.send(args.clone())?;
+    std::io::copy(resp.output(), &mut std::io::stdout())?;
+    resp.wait_exit_code()
 }
 
 fn read_file<P: AsRef<Path>>(filepath: P) -> Result<Config> {
