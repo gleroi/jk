@@ -1,9 +1,11 @@
-use super::{Cli, Code, Encoder};
+use super::{Cli, Code};
 use anyhow::{anyhow, Result};
 use tungstenite;
 use tungstenite::client::AutoStream;
 use tungstenite::{client, handshake};
 use tungstenite::{Message, WebSocket};
+
+use super::codec::Encoder;
 
 fn websocket(clt: &Cli) -> Result<WebSocket<AutoStream>> {
     let mut url = reqwest::Url::parse(&format!("{}/{}", clt.cfg.url, "cli/ws"))?;
