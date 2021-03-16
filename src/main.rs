@@ -8,7 +8,7 @@ use std::path::Path;
 mod jenkins;
 
 #[derive(Clap)]
-#[clap(version = "0.1", author = "LinkyPilot")]
+#[clap(version = "1.0", author = "Guillaume Leroi")]
 struct Opts {
     /// Select the jenkins instance to run against
     #[clap(short, long)]
