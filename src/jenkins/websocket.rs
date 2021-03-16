@@ -5,7 +5,7 @@ use tungstenite::{client, handshake};
 use tungstenite::{Message, WebSocket};
 
 use super::codec::Encoder;
-
+/*
 fn websocket(clt: &Cli) -> Result<WebSocket<AutoStream>> {
     let mut url = reqwest::Url::parse(&format!("{}/{}", clt.cfg.url, "cli/ws"))?;
     url.set_scheme("wss").unwrap();
@@ -20,6 +20,8 @@ fn websocket(clt: &Cli) -> Result<WebSocket<AutoStream>> {
         )
         .body(())?;
     let (ws, resp) = client::connect(req)?;
+    println!("{:#?}", resp);
+
     if resp.status().is_client_error() || resp.status().is_server_error() {
         Err(anyhow!("error while establishing ws: {}", resp.status()))
     } else {
@@ -64,3 +66,4 @@ pub fn sendws(clt: &Cli, args: &[String]) -> Result<()> {
         }
     }
 }
+*/

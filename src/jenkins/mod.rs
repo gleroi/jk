@@ -11,7 +11,7 @@ mod codec;
 mod http;
 mod websocket;
 
-use codec::{Decoder, Encoder};
+use codec::{Encoder};
 
 #[derive(Debug)]
 pub struct Frame {
@@ -64,6 +64,11 @@ pub struct Cli {
     cfg: Server,
 }
 
+pub trait Transport {
+    fn write_frame(&mut self, frame: &Frame) -> Result<()>;
+    fn read_frame(&mut self) -> Result<Frame>;
+}
+
 pub struct Response {
     output: PipeReader,
     decode_thread: thread::JoinHandle<Result<i32>>,
@@ -114,10 +119,8 @@ impl Cli {
 
         let (output, mut input) = pipe();
         let decode_thread = thread::spawn(move || -> Result<i32> {
-            let mut decoder = Decoder::new(&mut transport);
-            decoder.skip_initial_zero()?;
             loop {
-                let f = decoder.frame()?;
+                let f = transport.read_frame()?;
                 match &f.op {
                     Code::Stderr => {
                         input.write_all(&f.data)?;

@@ -1,10 +1,13 @@
 use super::Cli;
 use anyhow::{Context, Result};
 use pipe::{pipe, PipeReader, PipeWriter};
+use std::convert::TryInto;
 use std::io::{Read, Write};
 use std::sync::{Arc, Barrier};
 use std::thread;
 use uuid::Uuid;
+use crate::jenkins;
+use crate::jenkins::Frame;
 
 pub struct Transport {
     server_thread: Option<thread::JoinHandle<Result<()>>>,
@@ -12,6 +15,8 @@ pub struct Transport {
 
     client_thread: Option<thread::JoinHandle<Result<()>>>,
     client_input: PipeWriter,
+    
+    initial_zero_skipped: bool,
 }
 
 impl Transport {
@@ -27,6 +32,7 @@ impl Transport {
             server_output: output,
             client_thread: Some(client),
             client_input: input,
+            initial_zero_skipped: false,
         })
     }
 
@@ -37,6 +43,34 @@ impl Transport {
         // it's ugly, but could not find an another way to do it :'(
         let (_output, input) = pipe();
         self.client_input = input;
+    }
+}
+
+impl jenkins::Transport for Transport {
+    fn write_frame(&mut self, f: &Frame) -> Result<()> {
+        self.write_all(&(f.data.len() as u32).to_be_bytes())?;
+        self.write_all(&(f.op as u8).to_be_bytes())?;
+        self.write_all(&f.data)?;
+        Ok(())
+    }
+
+    fn read_frame(&mut self) -> Result<Frame> {
+        let mut buf = [0; 4];
+        if !self.initial_zero_skipped {
+            self.read_exact(&mut buf[0..1])?;
+            self.initial_zero_skipped = true;
+        }
+
+        let mut buf = [0; 4];
+        self.read_exact(&mut buf)?;
+        let len = u32::from_be_bytes(buf) as usize;
+
+        self.read_exact(&mut buf[0..1])?;
+        let op = buf[0].try_into()?;
+
+        let mut data = vec![0; len];
+        self.read_exact(&mut data)?;
+        Ok(Frame { op, data })
     }
 }
 
