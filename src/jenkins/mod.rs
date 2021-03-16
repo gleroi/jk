@@ -102,14 +102,13 @@ impl Cli {
     pub fn send(&self, args: &[String]) -> Result<Response> {
         let mut transport = http::Transport::new(self)?;
 
-        let mut encoder = Encoder::new();
+        let mut encoder = Encoder::new(&mut transport);
         for arg in args {
             encoder.string(Code::Arg, arg)?;
         }
         encoder.string(Code::Encoding, "utf-8")?;
         encoder.string(Code::Locale, "en")?;
         encoder.op(Code::Start)?;
-        transport.write_all(&encoder.buffer())?;
         transport.flush()?;
         transport.close_input();
 

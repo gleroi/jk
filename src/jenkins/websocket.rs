@@ -33,19 +33,22 @@ pub fn sendws(clt: &Cli, args: &[String]) -> Result<()> {
         ws.write_message(Message::Text(arg.to_string()))?;
     }
     {
-        let mut encoder = Encoder::new();
+        let mut buf = Vec::new();
+        let mut encoder = Encoder::new(&mut buf);
         encoder.string(Code::Encoding, "utf-8")?;
-        ws.write_message(Message::Binary(encoder.buffer()))?;
+        ws.write_message(Message::Binary(buf))?;
     }
     {
-        let mut encoder = Encoder::new();
+        let mut  buf = Vec::new();
+        let mut encoder = Encoder::new(&mut buf);
         encoder.string(Code::Locale, "en")?;
-        ws.write_message(Message::Binary(encoder.buffer()))?;
+        ws.write_message(Message::Binary(buf))?;
     }
     {
-        let mut encoder = Encoder::new();
+        let mut buf = Vec::new();
+        let mut encoder = Encoder::new(&mut buf);
         encoder.op(Code::Start)?;
-        ws.write_message(Message::Binary(encoder.buffer()))?;
+        ws.write_message(Message::Binary(buf))?;
     }
     ws.write_pending()?;
     loop {

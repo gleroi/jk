@@ -3,21 +3,19 @@ use anyhow::Result;
 use std::convert::TryInto;
 use std::io::Write;
 
-pub struct Encoder {
-    buf: Vec<u8>,
+pub struct Encoder<'a, T: std::io::Write> {
+    w: &'a mut T,
 }
 
-impl Encoder {
-    pub fn new() -> Encoder {
-        Encoder {
-            buf: Vec::with_capacity(1024),
-        }
+impl<T: std::io::Write> Encoder<'_, T> {
+    pub fn new(writer: &mut T) -> Encoder<T> {
+        Encoder { w: writer }
     }
 
     fn frame(&mut self, f: &Frame) -> Result<()> {
-        self.buf.write_all(&(f.data.len() as u32).to_be_bytes())?;
-        self.buf.write_all(&(f.op as u8).to_be_bytes())?;
-        self.buf.write_all(&f.data)?;
+        self.w.write_all(&(f.data.len() as u32).to_be_bytes())?;
+        self.w.write_all(&(f.op as u8).to_be_bytes())?;
+        self.w.write_all(&f.data)?;
         Ok(())
     }
 
@@ -34,10 +32,6 @@ impl Encoder {
         data.write_all(&(str_bytes.len() as u16).to_be_bytes())?;
         data.write_all(str_bytes)?;
         self.frame(&Frame { op, data })
-    }
-
-    pub fn buffer(&self) -> Vec<u8> {
-        self.buf.clone()
     }
 }
 
