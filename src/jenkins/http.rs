@@ -7,10 +7,10 @@ use std::thread;
 use uuid::Uuid;
 
 pub struct Transport {
-    _server_thread: thread::JoinHandle<Result<()>>,
+    server_thread: Option<thread::JoinHandle<Result<()>>>,
     server_output: PipeReader,
 
-    _client_thread: thread::JoinHandle<Result<()>>,
+    client_thread: Option<thread::JoinHandle<Result<()>>>,
     client_input: PipeWriter,
 }
 
@@ -23,9 +23,9 @@ impl Transport {
         let (server, output) = recv(clt.clone(), uuid, ready.clone());
         let (client, input) = send(clt.clone(), uuid, ready);
         Ok(Transport {
-            _server_thread: server,
+            server_thread: Some(server),
             server_output: output,
-            _client_thread: client,
+            client_thread: Some(client),
             client_input: input,
         })
     }
@@ -53,6 +53,13 @@ impl std::io::Write for Transport {
 impl std::io::Read for Transport {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         self.server_output.read(buf)
+    }
+}
+
+impl Drop for Transport {
+    fn drop(&mut self) {
+        self.server_thread.take().unwrap().join().unwrap().expect("error in server thread");
+        self.client_thread.take().unwrap().join().unwrap().expect("error in client thread");
     }
 }
 
