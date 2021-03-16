@@ -13,6 +13,9 @@ struct Opts {
     /// Select the jenkins instance to run against
     #[clap(short, long)]
     jenkins: Option<String>,
+    /// path to config file, default to "~/.config/jk/jenkins.toml"
+    #[clap(short, long)]
+    config: Option<String>,
     args: Vec<String>,
 }
 
@@ -25,7 +28,14 @@ struct Config {
 
 fn main() -> Result<()> {
     let opts = Opts::parse();
-    let config = read_file("jenkins.toml")?;
+    let config = if let Some(ref path) = opts.config {
+        Path::new(path).to_path_buf()
+    } else {
+        let mut home = dirs::home_dir().ok_or_else(|| anyhow!("no HOME dir found"))?;
+        home.push(".config/jk/jenkins.toml");
+        home
+    };
+    let config = read_file(config)?;
 
     let server = opts.jenkins.unwrap_or(config.default);
     let cfg = config
