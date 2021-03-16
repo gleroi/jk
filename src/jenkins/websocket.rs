@@ -1,6 +1,5 @@
 use super::{Cli, Code};
 use anyhow::{anyhow, Result};
-use tungstenite;
 use tungstenite::client::AutoStream;
 use tungstenite::{client, handshake};
 use tungstenite::{Message, WebSocket};
@@ -28,7 +27,7 @@ fn websocket(clt: &Cli) -> Result<WebSocket<AutoStream>> {
     }
 }
 
-pub fn sendws(clt: &Cli, args: &Vec<String>) -> Result<()> {
+pub fn sendws(clt: &Cli, args: &[String]) -> Result<()> {
     let mut ws = websocket(clt)?;
     for arg in args {
         ws.write_message(Message::Text(arg.to_string()))?;

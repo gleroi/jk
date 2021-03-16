@@ -20,8 +20,8 @@ impl Transport {
         // - main thread prepare the command and wait first thread to be ready to listen
         let ready = Arc::new(Barrier::new(2));
         let uuid = Uuid::new_v4();
-        let (server, output) = recv(clt.clone(), uuid, ready.clone())?;
-        let (client, input) = send(clt.clone(), uuid, ready)?;
+        let (server, output) = recv(clt.clone(), uuid, ready.clone());
+        let (client, input) = send(clt.clone(), uuid, ready);
         Ok(Transport {
             _server_thread: server,
             server_output: output,
@@ -56,11 +56,11 @@ impl std::io::Read for Transport {
     }
 }
 
-pub fn recv(
+fn recv(
     clt_server: Cli,
     uuid: Uuid,
     server_ready: Arc<Barrier>,
-) -> Result<(thread::JoinHandle<Result<()>>, PipeReader)> {
+) -> (thread::JoinHandle<Result<()>>, PipeReader) {
     let (output, mut input) = pipe::pipe();
 
     let server = thread::spawn(move || -> Result<()> {
@@ -78,14 +78,14 @@ pub fn recv(
         input.flush()?;
         Ok(())
     });
-    Ok((server, output))
+    (server, output)
 }
 
-pub fn send(
+fn send(
     clt_client: Cli,
     uuid: Uuid,
     ready: Arc<Barrier>,
-) -> Result<(thread::JoinHandle<Result<()>>, PipeWriter)> {
+) -> (thread::JoinHandle<Result<()>>, PipeWriter) {
     let (output, input) = pipe::pipe();
 
     let client = thread::spawn(move || -> Result<()> {
@@ -112,5 +112,5 @@ pub fn send(
         req.send().with_context(|| "while sending request... ")?;
         Ok(())
     });
-    Ok((client, input))
+    (client, input)
 }

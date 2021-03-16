@@ -4,7 +4,6 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
-use toml;
 
 mod jenkins;
 
@@ -32,15 +31,15 @@ fn main() -> Result<()> {
     let cfg = config
         .servers
         .get(&server)
-        .ok_or(anyhow!("no server {} found", server))?;
+        .ok_or_else(|| anyhow!("no server {} found", server))?;
 
     let code = run_jenkins(cfg, &opts.args)?;
     std::process::exit(code);
 }
 
-fn run_jenkins(cfg: &jenkins::Server, args: &Vec<String>) -> Result<i32> {
+fn run_jenkins(cfg: &jenkins::Server, args: &[String]) -> Result<i32> {
     let cli = jenkins::Cli::new(cfg.clone())?;
-    let mut resp = cli.send(args.clone())?;
+    let mut resp = cli.send(args)?;
     std::io::copy(resp.output(), &mut std::io::stdout())?;
     resp.wait_exit_code()
 }

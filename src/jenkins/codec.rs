@@ -15,25 +15,25 @@ impl Encoder {
     }
 
     fn frame(&mut self, f: &Frame) -> Result<()> {
-        self.buf.write(&(f.data.len() as u32).to_be_bytes())?;
-        self.buf.write(&(f.op as u8).to_be_bytes())?;
-        self.buf.write(&f.data)?;
+        self.buf.write_all(&(f.data.len() as u32).to_be_bytes())?;
+        self.buf.write_all(&(f.op as u8).to_be_bytes())?;
+        self.buf.write_all(&f.data)?;
         Ok(())
     }
 
     pub fn op(&mut self, op: Code) -> Result<()> {
         self.frame(&Frame {
-            op: op,
+            op,
             data: Vec::new(),
         })
     }
 
-    pub fn string<'a>(&mut self, op: Code, s: &'a str) -> Result<()> {
+    pub fn string<>(&mut self, op: Code, s: &str) -> Result<()> {
         let str_bytes = s.as_bytes();
         let mut data = Vec::with_capacity(2 + str_bytes.len());
-        data.write(&(str_bytes.len() as u16).to_be_bytes())?;
-        data.write(str_bytes)?;
-        self.frame(&Frame { op: op, data: data })
+        data.write_all(&(str_bytes.len() as u16).to_be_bytes())?;
+        data.write_all(str_bytes)?;
+        self.frame(&Frame { op, data })
     }
 
     pub fn buffer(&self) -> Vec<u8> {
@@ -65,9 +65,8 @@ impl<T: std::io::Read> Decoder<'_, T> {
         self.r.read_exact(&mut buf[0..1])?;
         let op = buf[0].try_into()?;
 
-        let mut data = Vec::with_capacity(len);
-        data.resize(len, 0);
+        let mut data = vec![0; len];
         self.r.read_exact(&mut data)?;
-        Ok(Frame { op: op, data: data })
+        Ok(Frame { op, data })
     }
 }

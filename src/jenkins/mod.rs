@@ -71,7 +71,7 @@ pub struct Response {
 
 impl Response {
     pub fn output(&mut self) -> &mut impl Read {
-        return &mut self.output;
+        &mut self.output
     }
 
     pub fn wait_exit_code(self) -> Result<i32> {
@@ -82,12 +82,9 @@ impl Response {
     }
 }
 
-// TODO: return in command a pipe, to read the pipe while the transport/thread write to it. and  keep the thread
-// in scope.
-
 impl Cli {
     pub fn new(cfg: Server) -> Result<Cli> {
-        Ok(Cli { cfg: cfg })
+        Ok(Cli { cfg })
     }
 
     fn client(&self) -> Result<blocking::Client> {
@@ -102,11 +99,11 @@ impl Cli {
         Ok(builder.build()?)
     }
 
-    pub fn send(&self, args: Vec<String>) -> Result<Response> {
+    pub fn send(&self, args: &[String]) -> Result<Response> {
         let mut transport = http::Transport::new(self)?;
 
         let mut encoder = Encoder::new();
-        for arg in &args {
+        for arg in args {
             encoder.string(Code::Arg, arg)?;
         }
         encoder.string(Code::Encoding, "utf-8")?;
