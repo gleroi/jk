@@ -26,7 +26,7 @@ impl<T: std::io::Write> Encoder<'_, T> {
         })
     }
 
-    pub fn string<>(&mut self, op: Code, s: &str) -> Result<()> {
+    pub fn string(&mut self, op: Code, s: &str) -> Result<()> {
         let str_bytes = s.as_bytes();
         let mut data = Vec::with_capacity(2 + str_bytes.len());
         data.write_all(&(str_bytes.len() as u16).to_be_bytes())?;

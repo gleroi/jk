@@ -39,7 +39,7 @@ pub fn sendws(clt: &Cli, args: &[String]) -> Result<()> {
         ws.write_message(Message::Binary(buf))?;
     }
     {
-        let mut  buf = Vec::new();
+        let mut buf = Vec::new();
         let mut encoder = Encoder::new(&mut buf);
         encoder.string(Code::Locale, "en")?;
         ws.write_message(Message::Binary(buf))?;
