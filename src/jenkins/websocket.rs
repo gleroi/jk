@@ -31,14 +31,11 @@ impl jenkins::Transport for Transport {
     fn read_frame(&mut self) -> Result<Frame> {
         loop {
             let m = self.socket.read_message()?;
-            match m {
-                Message::Binary(buf) => {
-                    let op = buf[0].try_into()?;
+            if let Message::Binary(buf) = m {
+                let op = buf[0].try_into()?;
 
-                    let data = buf[1..].to_vec();
-                    return Ok(Frame { op, data });
-                }
-                _ => (),
+                let data = buf[1..].to_vec();
+                return Ok(Frame { op, data });
             }
         }
     }
