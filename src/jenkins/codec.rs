@@ -1,7 +1,7 @@
 use super::{Code, Frame};
+use crate::jenkins;
 use anyhow::Result;
 use std::io::Write;
-use crate::jenkins;
 
 pub struct Encoder<'a, T: jenkins::Transport> {
     w: &'a mut T,
@@ -31,4 +31,3 @@ impl<T: jenkins::Transport> Encoder<'_, T> {
         self.frame(&Frame { op, data })
     }
 }
-

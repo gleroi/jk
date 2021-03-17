@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Result};
 use pipe::{pipe, PipeReader};
-use reqwest::blocking;
+use reqwest::Url;
 use serde::Deserialize;
 use std::convert::TryFrom;
 use std::convert::TryInto;
@@ -11,7 +11,7 @@ mod codec;
 mod http;
 mod websocket;
 
-use codec::{Encoder};
+use codec::Encoder;
 
 #[derive(Debug)]
 pub struct Frame {
@@ -67,6 +67,7 @@ pub struct Cli {
 pub trait Transport {
     fn write_frame(&mut self, frame: &Frame) -> Result<()>;
     fn read_frame(&mut self) -> Result<Frame>;
+    fn close_input(&mut self) -> Result<()>;
 }
 
 pub struct Response {
@@ -92,21 +93,21 @@ impl Cli {
         Ok(Cli { cfg })
     }
 
-    fn client(&self) -> Result<blocking::Client> {
-        let mut builder = blocking::Client::builder()
-            .tcp_keepalive(std::time::Duration::from_secs(1))
-            .timeout(None)
-            .cookie_store(true)
-            .danger_accept_invalid_certs(true);
-        if let Some(proxy) = &self.cfg.proxy {
-            builder = builder.proxy(reqwest::Proxy::all(proxy)?);
+    pub fn send(&self, args: &[String]) -> Result<Response> {
+        let url = Url::parse(&self.cfg.url)?;
+        let scheme = url.scheme();
+        if scheme.starts_with("ws") {
+            self.send_with_transport(websocket::Transport::new(self)?, args)
+        } else {
+            self.send_with_transport(http::Transport::new(self)?, args)
         }
-        Ok(builder.build()?)
     }
 
-    pub fn send(&self, args: &[String]) -> Result<Response> {
-        let mut transport = websocket::Transport::new(self)?;
-
+    fn send_with_transport<T: 'static + Transport + Send>(
+        &self,
+        mut transport: T,
+        args: &[String],
+    ) -> Result<Response> {
         let mut encoder = Encoder::new(&mut transport);
         for arg in args {
             encoder.string(Code::Arg, arg)?;
@@ -114,8 +115,7 @@ impl Cli {
         encoder.string(Code::Encoding, "utf-8")?;
         encoder.string(Code::Locale, "en")?;
         encoder.op(Code::Start)?;
-        transport.flush()?;
-        transport.close_input();
+        transport.close_input()?;
 
         let (output, mut input) = pipe();
         let decode_thread = thread::spawn(move || -> Result<i32> {

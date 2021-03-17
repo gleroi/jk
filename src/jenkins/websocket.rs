@@ -1,12 +1,12 @@
-use super::{Cli};
+use super::Cli;
+use crate::jenkins;
+use crate::jenkins::Frame;
 use anyhow::{anyhow, Result};
+use std::convert::TryInto;
+use std::io::Write;
 use tungstenite::client::AutoStream;
 use tungstenite::{client, handshake};
 use tungstenite::{Message, WebSocket};
-use std::convert::TryInto;
-use std::io::{Write};
-use crate::jenkins;
-use crate::jenkins::Frame;
 
 pub struct Transport {
     socket: WebSocket<AutoStream>,
@@ -14,22 +14,14 @@ pub struct Transport {
 
 impl Transport {
     pub fn new(cli: &Cli) -> Result<Transport> {
-       let socket = websocket(cli)?;
-       Ok(Transport{ socket })
-    }
-
-    pub fn close_input(&mut self) {
-    }
-
-    pub fn flush(&mut self) -> Result<()> {
-        self.socket.write_pending()?;
-        Ok(())
+        let socket = websocket(cli)?;
+        Ok(Transport { socket })
     }
 }
 
 impl jenkins::Transport for Transport {
     fn write_frame(&mut self, f: &Frame) -> Result<()> {
-        let mut buf = Vec::with_capacity(f.data.len()+1);
+        let mut buf = Vec::with_capacity(f.data.len() + 1);
         buf.write_all(&(f.op as u8).to_be_bytes())?;
         buf.write_all(&f.data)?;
         self.socket.write_message(Message::Binary(buf))?;
@@ -46,16 +38,19 @@ impl jenkins::Transport for Transport {
                     let data = buf[1..].to_vec();
                     return Ok(Frame { op, data });
                 }
-                _ => ()
+                _ => (),
             }
         }
     }
+
+    fn close_input(&mut self) -> Result<()> {
+        self.socket.write_pending()?;
+        Ok(())
+    }
 }
 
-
 fn websocket(clt: &Cli) -> Result<WebSocket<AutoStream>> {
-    let mut url = reqwest::Url::parse(&format!("{}/{}", clt.cfg.url, "cli/ws"))?;
-    url.set_scheme("ws").unwrap();
+    let url = reqwest::Url::parse(&format!("{}/{}", clt.cfg.url, "cli/ws"))?;
     let req = handshake::client::Request::builder()
         .uri(url.to_string())
         .header(
@@ -74,4 +69,3 @@ fn websocket(clt: &Cli) -> Result<WebSocket<AutoStream>> {
         Ok(ws)
     }
 }
-
