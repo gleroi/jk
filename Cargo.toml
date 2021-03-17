@@ -1,6 +1,6 @@
 [package]
 name = "jk"
-version = "0.1.0"
+version = "1.0.0"
 authors = ["Guillaume Leroi <guillaume-externe.leroi@enedis.fr>"]
 edition = "2018"
 
