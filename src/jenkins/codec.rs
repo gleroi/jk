@@ -1,6 +1,5 @@
 use super::{Code, Frame};
 use anyhow::Result;
-use std::convert::TryInto;
 use std::io::Write;
 use crate::jenkins;
 

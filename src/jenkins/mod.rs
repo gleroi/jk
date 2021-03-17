@@ -105,7 +105,7 @@ impl Cli {
     }
 
     pub fn send(&self, args: &[String]) -> Result<Response> {
-        let mut transport = http::Transport::new(self)?;
+        let mut transport = websocket::Transport::new(self)?;
 
         let mut encoder = Encoder::new(&mut transport);
         for arg in args {

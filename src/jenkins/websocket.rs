@@ -1,14 +1,61 @@
-use super::{Cli, Code};
+use super::{Cli};
 use anyhow::{anyhow, Result};
 use tungstenite::client::AutoStream;
 use tungstenite::{client, handshake};
 use tungstenite::{Message, WebSocket};
+use std::convert::TryInto;
+use std::io::{Write};
+use crate::jenkins;
+use crate::jenkins::Frame;
 
-use super::codec::Encoder;
-/*
+pub struct Transport {
+    socket: WebSocket<AutoStream>,
+}
+
+impl Transport {
+    pub fn new(cli: &Cli) -> Result<Transport> {
+       let socket = websocket(cli)?;
+       Ok(Transport{ socket })
+    }
+
+    pub fn close_input(&mut self) {
+    }
+
+    pub fn flush(&mut self) -> Result<()> {
+        self.socket.write_pending()?;
+        Ok(())
+    }
+}
+
+impl jenkins::Transport for Transport {
+    fn write_frame(&mut self, f: &Frame) -> Result<()> {
+        let mut buf = Vec::with_capacity(f.data.len()+1);
+        buf.write_all(&(f.op as u8).to_be_bytes())?;
+        buf.write_all(&f.data)?;
+        self.socket.write_message(Message::Binary(buf))?;
+        Ok(())
+    }
+
+    fn read_frame(&mut self) -> Result<Frame> {
+        loop {
+            let m = self.socket.read_message()?;
+            match m {
+                Message::Binary(buf) => {
+                    let op = buf[0].try_into()?;
+
+                    let data = buf[1..].to_vec();
+                    return Ok(Frame { op, data });
+                }
+                _ => ()
+            }
+        }
+    }
+}
+
+
 fn websocket(clt: &Cli) -> Result<WebSocket<AutoStream>> {
     let mut url = reqwest::Url::parse(&format!("{}/{}", clt.cfg.url, "cli/ws"))?;
-    url.set_scheme("wss").unwrap();
+    url.set_scheme("ws").unwrap();
     let req = handshake::client::Request::builder()
         .uri(url.to_string())
         .header(
@@ -20,7 +67,6 @@ fn websocket(clt: &Cli) -> Result<WebSocket<AutoStream>> {
         )
         .body(())?;
     let (ws, resp) = client::connect(req)?;
-    println!("{:#?}", resp);
 
     if resp.status().is_client_error() || resp.status().is_server_error() {
         Err(anyhow!("error while establishing ws: {}", resp.status()))
@@ -29,41 +75,3 @@ fn websocket(clt: &Cli) -> Result<WebSocket<AutoStream>> {
     }
 }
 
-pub fn sendws(clt: &Cli, args: &[String]) -> Result<()> {
-    let mut ws = websocket(clt)?;
-    for arg in args {
-        ws.write_message(Message::Text(arg.to_string()))?;
-    }
-    {
-        let mut buf = Vec::new();
-        let mut encoder = Encoder::new(&mut buf);
-        encoder.string(Code::Encoding, "utf-8")?;
-        ws.write_message(Message::Binary(buf))?;
-    }
-    {
-        let mut buf = Vec::new();
-        let mut encoder = Encoder::new(&mut buf);
-        encoder.string(Code::Locale, "en")?;
-        ws.write_message(Message::Binary(buf))?;
-    }
-    {
-        let mut buf = Vec::new();
-        let mut encoder = Encoder::new(&mut buf);
-        encoder.op(Code::Start)?;
-        ws.write_message(Message::Binary(buf))?;
-    }
-    ws.write_pending()?;
-    loop {
-        let resp = ws.read_message()?;
-        match resp {
-            Message::Text(str) => println!("{}", str),
-            Message::Binary(data) => println!("{}", String::from_utf8_lossy(&data)),
-            Message::Ping(ref data) => {
-                println!("expected: {:?}", resp);
-                ws.write_message(Message::Pong(data.to_vec()))?;
-            }
-            _ => println!("unexpected: {:?}", resp),
-        }
-    }
-}
-*/
