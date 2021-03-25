@@ -1,0 +1,12 @@
+[package]
+name = "ajk"
+version = "0.1.0"
+authors = ["Guillaume Leroi <guillaume@leroi.re>"]
+edition = "2018"
+
+[dependencies]
+hyper = { version = "0.14", features = ["full"] }
+tokio = { version = "1", features = ["full"] }
+uuid = { version = "0.8", features = ["v4"] }
+base64 = { version = "0.13" }
+pipe = { version = "0.4" }
