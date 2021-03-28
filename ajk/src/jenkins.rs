@@ -51,7 +51,6 @@ pub trait Transport {
     fn close_input(&mut self) -> Result<()>;
 }
 
-
 pub struct Encoder<'a, T: jenkins::Transport> {
     w: &'a mut T,
 }
