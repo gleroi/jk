@@ -1,7 +1,9 @@
-use hyper::body::HttpBody as _;
+use hyper::body::{HttpBody as _, Buf};
 use hyper::{Client, Request, Uri, Body};
 use tokio::{join, try_join, io::{stdout, AsyncWriteExt as _}};
 use anyhow::{anyhow, Result};
+use std::io::Read;
+use std::convert::TryInto;
 
 type AResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
@@ -13,7 +15,7 @@ async fn main() -> AResult<()> {
     Ok(())
 }
 
-async fn recv<T>(client: Client<T>, uuid: uuid::Uuid) -> AResult<()>
+async fn recv<T>(client: Client<T>, uuid: uuid::Uuid) -> AResult<i32>
     where T: 'static + hyper::client::connect::Connect + Send + Sync + Clone {
     let uri = Uri::builder()
         .scheme("http")
@@ -37,10 +39,24 @@ async fn recv<T>(client: Client<T>, uuid: uuid::Uuid) -> AResult<()>
     println!("Response: {}", resp.status());
     send(client.clone(), uuid).await?;
     println!("awaiting input done");
-    while let Some(chunk) = resp.body_mut().data().await {
-        stdout().write_all(&chunk?).await?;
+    let mut output = hyper::body::to_bytes(resp.body_mut()).await?.reader();
+    let mut buf = [0; 4];
+    output.read_exact(&mut buf[0..1])?;
+    loop {
+        let f = read_frame(&mut output)?;
+        //stdout().write_all(format!("{:?} ", f).as_bytes()).await?;
+        match &f.op {
+            Code::Stderr | Code::Stdout => {
+                stdout().write_all(&f.data).await?;
+                stdout().flush().await?;
+            }
+            Code::Exit => {
+                let exit_code = i32::from_be_bytes(f.data[0..4].try_into()?);
+                return Ok(exit_code);
+            }
+            _ => println!("unexpected {:?}", f),
+        }
     }
-    Ok(())
 }
 
 async fn send<T>(input_client: Client<T>, uuid: uuid::Uuid) -> AResult<()>
@@ -76,6 +92,19 @@ async fn send<T>(input_client: Client<T>, uuid: uuid::Uuid) -> AResult<()>
     let mut resp = input_client.request(req).await?;
     println!("Request: {}", resp.status());
     Ok(())
+}
+
+fn read_frame(r: &mut impl std::io::Read) -> Result<Frame> {
+    let mut buf = [0; 4];
+    r.read_exact(&mut buf)?;
+    let len = u32::from_be_bytes(buf) as usize;
+
+    r.read_exact(&mut buf[0..1])?;
+    let op = buf[0].try_into()?;
+
+    let mut data = vec![0; len];
+    r.read_exact(&mut data)?;
+    Ok(Frame { op, data })
 }
 
 #[derive(Debug)]
