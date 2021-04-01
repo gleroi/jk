@@ -1,5 +1,6 @@
 use hyper::body::{HttpBody as _, Buf};
 use hyper::{Client, Request, Uri, Body};
+use hyper_tls::HttpsConnector;
 use tokio::{join, try_join, io::{stdout, AsyncWriteExt as _}};
 use anyhow::{anyhow, Result};
 use std::io::Read;
@@ -10,15 +11,20 @@ type AResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 #[tokio::main]
 async fn main() -> AResult<()> {
     let uuid = uuid::Uuid::new_v4();
-    let client = Client::new();
+    let https = HttpsConnector::new();
+    let client = Client::builder().build(https);
     recv(client, uuid).await?;
     Ok(())
 }
 
+const USERNAME: &str = "gleroi";
+const PASSWORD: &str = "gleroi";
+const URI : &str = "127.0.0.1:8080";
+
 fn request(uuid: &uuid::Uuid, username: &str, password: &str) -> Result<hyper::http::request::Builder> {
     let uri = Uri::builder()
-        .scheme("http")
-        .authority("127.0.0.1:8080")
+        .scheme("https")
+        .authority(URI)
         .path_and_query("/cli?remoting=false")
         .build()?;
     Ok(Request::builder()
@@ -28,7 +34,7 @@ fn request(uuid: &uuid::Uuid, username: &str, password: &str) -> Result<hyper::h
             "Authorization",
             format!(
                 "Basic {}",
-                base64::encode(format!("{}:{}", "gleroi", "gleroi"))
+                base64::encode(format!("{}:{}", &username, &password))
             ),
         )
         .header("Session", format!("{}", uuid)))
@@ -36,7 +42,7 @@ fn request(uuid: &uuid::Uuid, username: &str, password: &str) -> Result<hyper::h
 
 async fn recv<T>(client: Client<T>, uuid: uuid::Uuid) -> AResult<i32>
     where T: 'static + hyper::client::connect::Connect + Send + Sync + Clone {
-    let req = request(&uuid, "gleroi", "gleroi")?
+    let req = request(&uuid, USERNAME, PASSWORD)?
         .header("Side", "download")
         .body(Body::empty())?;
     let mut resp = client.request(req).await?;
@@ -73,7 +79,7 @@ async fn send<T>(input_client: Client<T>, uuid: uuid::Uuid) -> AResult<()>
     encoder.string(Code::Locale, "en")?;
     encoder.op(Code::Start)?;
 
-    let req = request(&uuid, "gleroi", "gleroi")?
+    let req = request(&uuid, USERNAME, PASSWORD)?
         .header("Side", "upload")
         .body(buf.into())?;
     let mut resp = input_client.request(req).await?;
