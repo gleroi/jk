@@ -1,19 +1,16 @@
 use anyhow::{anyhow, Result};
-use serde::Deserialize;
-use hyper::body::{Buf};
+use hyper::body::Buf;
 use hyper::{Body, Client, Request, Uri};
-use hyper_proxy::{Proxy, ProxyConnector, Intercept};
+use hyper_proxy::{Intercept, Proxy, ProxyConnector};
 use hyper_tls::HttpsConnector;
+use serde::Deserialize;
 use std::convert::TryInto;
 use std::io::Read;
-use tokio::{
-    io::{AsyncWriteExt as _},
-};
-
+use tokio::io::AsyncWriteExt as _;
 
 type AResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
-pub async fn run(cfg :&Server, args: &[String]) -> AResult<i32> {
+pub async fn run(cfg: &Server, args: &[String]) -> AResult<i32> {
     let uuid = uuid::Uuid::new_v4();
     let mut connector = ProxyConnector::new(HttpsConnector::new())?;
     if let Some(ref proxy_url) = cfg.proxy {
@@ -24,10 +21,7 @@ pub async fn run(cfg :&Server, args: &[String]) -> AResult<i32> {
     Ok(recv(client, cfg, uuid, args).await?)
 }
 
-fn request(
-    cfg: &Server,
-    uuid: &uuid::Uuid,
-) -> Result<hyper::http::request::Builder> {
+fn request(cfg: &Server, uuid: &uuid::Uuid) -> Result<hyper::http::request::Builder> {
     let uri = Uri::from_maybe_shared(format!("{}/{}", cfg.url, "cli?remoting=false"))?;
     Ok(Request::builder()
         .method("POST")
@@ -74,7 +68,12 @@ where
     }
 }
 
-async fn send<T>(input_client: Client<T>, cfg: &Server, uuid: uuid::Uuid, args: &[String]) -> AResult<()>
+async fn send<T>(
+    input_client: Client<T>,
+    cfg: &Server,
+    uuid: uuid::Uuid,
+    args: &[String],
+) -> AResult<()>
 where
     T: 'static + hyper::client::connect::Connect + Send + Sync + Clone,
 {

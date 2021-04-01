@@ -1,9 +1,9 @@
+use anyhow::{anyhow, Result};
 use clap::Clap;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
-use anyhow::{anyhow, Result};
 
 mod jenkins;
 
