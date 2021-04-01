@@ -1,7 +1,7 @@
 use hyper::body::{HttpBody as _, Buf};
 use hyper::{Client, Request, Uri, Body};
 use hyper_tls::HttpsConnector;
-use tokio::{join, try_join, io::{stdout, AsyncWriteExt as _}};
+use tokio::{join, try_join, io::{AsyncWriteExt as _, AsyncReadExt as _, AsyncRead}};
 use anyhow::{anyhow, Result};
 use std::io::Read;
 use std::convert::TryInto;
@@ -39,6 +39,7 @@ fn request(uuid: &uuid::Uuid, username: &str, password: &str) -> Result<hyper::h
         )
         .header("Session", format!("{}", uuid)))
 }
+use std::io::Write;
 
 async fn recv<T>(client: Client<T>, uuid: uuid::Uuid) -> AResult<i32>
     where T: 'static + hyper::client::connect::Connect + Send + Sync + Clone {
@@ -46,25 +47,22 @@ async fn recv<T>(client: Client<T>, uuid: uuid::Uuid) -> AResult<i32>
         .header("Side", "download")
         .body(Body::empty())?;
     let mut resp = client.request(req).await?;
-    println!("Response: {}", resp.status());
     send(client.clone(), uuid).await?;
-    println!("awaiting input done");
     let mut output = hyper::body::to_bytes(resp.body_mut()).await?.reader();
     let mut buf = [0; 4];
     output.read_exact(&mut buf[0..1])?;
+    let mut stdout = tokio::io::stdout();
     loop {
-        let f = read_frame(&mut output)?;
-        //stdout().write_all(format!("{:?} ", f).as_bytes()).await?;
+        let mut f = read_frame(&mut output)?;
         match &f.op {
             Code::Stderr | Code::Stdout => {
-                stdout().write_all(&f.data).await?;
-                stdout().flush().await?;
+                stdout.write_all(&f.data).await?;
             }
             Code::Exit => {
                 let exit_code = i32::from_be_bytes(f.data[0..4].try_into()?);
                 return Ok(exit_code);
             }
-            _ => println!("unexpected {:?}", f),
+            _ => stdout.write_all(format!("unexpected {:?}\n", f).as_bytes()).await?,
         }
     }
 }
@@ -99,10 +97,20 @@ fn read_frame(r: &mut impl std::io::Read) -> Result<Frame> {
     Ok(Frame { op, data })
 }
 
-#[derive(Debug)]
 pub struct Frame {
     op: Code,
     data: Vec<u8>,
+}
+
+use std::fmt;
+
+impl fmt::Debug for Frame {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Frame")
+         .field("op", &self.op)
+         .field("data", &format!("{}", String::from_utf8_lossy(&self.data)))
+         .finish()
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
