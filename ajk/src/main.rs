@@ -15,14 +15,13 @@ async fn main() -> AResult<()> {
     Ok(())
 }
 
-async fn recv<T>(client: Client<T>, uuid: uuid::Uuid) -> AResult<i32>
-    where T: 'static + hyper::client::connect::Connect + Send + Sync + Clone {
+fn request(uuid: &uuid::Uuid, username: &str, password: &str) -> Result<hyper::http::request::Builder> {
     let uri = Uri::builder()
         .scheme("http")
         .authority("127.0.0.1:8080")
         .path_and_query("/cli?remoting=false")
         .build()?;
-    let req = Request::builder()
+    Ok(Request::builder()
         .method("POST")
         .uri(uri)
         .header(
@@ -32,7 +31,12 @@ async fn recv<T>(client: Client<T>, uuid: uuid::Uuid) -> AResult<i32>
                 base64::encode(format!("{}:{}", "gleroi", "gleroi"))
             ),
         )
-        .header("Session", format!("{}", &uuid))
+        .header("Session", format!("{}", uuid)))
+}
+
+async fn recv<T>(client: Client<T>, uuid: uuid::Uuid) -> AResult<i32>
+    where T: 'static + hyper::client::connect::Connect + Send + Sync + Clone {
+    let req = request(&uuid, "gleroi", "gleroi")?
         .header("Side", "download")
         .body(Body::empty())?;
     let mut resp = client.request(req).await?;
@@ -61,36 +65,18 @@ async fn recv<T>(client: Client<T>, uuid: uuid::Uuid) -> AResult<i32>
 
 async fn send<T>(input_client: Client<T>, uuid: uuid::Uuid) -> AResult<()>
     where T: 'static + hyper::client::connect::Connect + Send + Sync + Clone {
-    println!("start request");
-    let uri = Uri::builder()
-        .scheme("http")
-        .authority("127.0.0.1:8080")
-        .path_and_query("/cli?remoting=false")
-        .build()?;
+
     let mut buf = Vec::with_capacity(256);
     let mut encoder = Encoder { w: &mut buf };
     encoder.string(Code::Arg, "help")?;
     encoder.string(Code::Encoding, "utf-8")?;
     encoder.string(Code::Locale, "en")?;
     encoder.op(Code::Start)?;
-    let req = Request::builder()
-        .method("POST")
-        .uri(uri)
-        .header(
-            "Authorization",
-            format!(
-                "Basic {}",
-                base64::encode(format!("{}:{}", "gleroi", "gleroi"))
-            ),
-        )
-        .header("Content-Type", "application/octet-stream")
-        .header("Transfer-encoding", "chunked")
-        .header("Session", format!("{}", &uuid))
+
+    let req = request(&uuid, "gleroi", "gleroi")?
         .header("Side", "upload")
         .body(buf.into())?;
-    println!("sending request");
     let mut resp = input_client.request(req).await?;
-    println!("Request: {}", resp.status());
     Ok(())
 }
 
