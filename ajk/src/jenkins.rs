@@ -5,12 +5,12 @@ use hyper_proxy::{Intercept, Proxy, ProxyConnector};
 use hyper_tls::HttpsConnector;
 use serde::Deserialize;
 use std::convert::TryInto;
-use std::io::Read;
-use tokio::io::AsyncWriteExt as _;
+use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWriteExt as _};
+use hyper::body::HttpBody as _;
 
 type AResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
-pub async fn run(cfg: &Server, args: &[String]) -> AResult<i32> {
+pub async fn run(cfg: &Server, args: &Vec<String>) -> AResult<i32> {
     let uuid = uuid::Uuid::new_v4();
     let mut connector = ProxyConnector::new(HttpsConnector::new())?;
     if let Some(ref proxy_url) = cfg.proxy {
@@ -33,10 +33,12 @@ fn request(cfg: &Server, uuid: &uuid::Uuid) -> Result<hyper::http::request::Buil
                 base64::encode(format!("{}:{}", &cfg.username, &cfg.password))
             ),
         )
-        .header("Session", format!("{}", uuid)))
+        .header("Session", format!("{}", uuid))
+        .header("Content-Type", "application/octet-stream")
+        .header("Transfer-encoding", "chunked"))
 }
 
-async fn recv<T>(client: Client<T>, cfg: &Server, uuid: uuid::Uuid, args: &[String]) -> AResult<i32>
+async fn recv<T>(client: Client<T>, cfg: &Server, uuid: uuid::Uuid, args: &Vec<String>) -> AResult<i32>
 where
     T: 'static + hyper::client::connect::Connect + Send + Sync + Clone,
 {
@@ -44,16 +46,44 @@ where
         .header("Side", "download")
         .body(Body::empty())?;
     let mut resp = client.request(req).await?;
-    send(client.clone(), cfg, uuid, args).await?;
-    let mut output = hyper::body::to_bytes(resp.body_mut()).await?.reader();
-    let mut buf = [0; 4];
-    output.read_exact(&mut buf[0..1])?;
+
+    let scfg = cfg.clone();
+    let sargs = args.clone();
+    let sender = tokio::spawn(async move {
+        send(client.clone(), scfg, uuid, &sargs).await
+    });
+
+    let (output, input) = tokio::io::duplex(1024);
+    let decoder = tokio::spawn(async {
+        read_all_frame(output).await
+    });
+    let copier = tokio::spawn(async move {
+        copy_body(resp.body_mut(), input).await
+    });
+    let res = tokio::try_join!(decoder, copier, sender);
+    match res {
+        Ok((exit_code, _, _)) => Ok(exit_code?),
+        Err(err) => Err(Box::new(err)),
+    }
+}
+
+async fn copy_body(body: &mut hyper::Body, mut input: tokio::io::DuplexStream) -> AResult<()> {
+    while let Some(chunk) = body.data().await {
+        input.write_all(&chunk?).await?;
+    } 
+    Ok(())
+}
+
+async fn read_all_frame(mut output: tokio::io::DuplexStream) -> AResult<i32> {
+    let mut buf : [u8; 4] = [0; 4];
+    output.read_exact(&mut buf[0..1]).await?;
     let mut stdout = tokio::io::stdout();
     loop {
-        let f = read_frame(&mut output)?;
+        let f = read_frame(&mut output).await?;
         match &f.op {
             Code::Stderr | Code::Stdout => {
                 stdout.write_all(&f.data).await?;
+                stdout.flush().await?;
             }
             Code::Exit => {
                 let exit_code = i32::from_be_bytes(f.data[0..4].try_into()?);
@@ -62,7 +92,9 @@ where
             _ => {
                 stdout
                     .write_all(format!("unexpected {:?}\n", f).as_bytes())
-                    .await?
+                    .await?;
+                stdout.flush().await?;
+
             }
         }
     }
@@ -70,7 +102,7 @@ where
 
 async fn send<T>(
     input_client: Client<T>,
-    cfg: &Server,
+    cfg: Server,
     uuid: uuid::Uuid,
     args: &[String],
 ) -> AResult<()>
@@ -90,23 +122,23 @@ where
     encoder.string(Code::Locale, "en")?;
     encoder.op(Code::Start)?;
 
-    let req = request(cfg, &uuid)?
+    let req = request(&cfg, &uuid)?
         .header("Side", "upload")
         .body(buf.into())?;
     let _resp = input_client.request(req).await?;
     Ok(())
 }
 
-fn read_frame(r: &mut impl std::io::Read) -> Result<Frame> {
+async fn read_frame<TReader: AsyncRead + Unpin>(r: &mut TReader) -> Result<Frame> {
     let mut buf = [0; 4];
-    r.read_exact(&mut buf)?;
+    r.read_exact(&mut buf).await?;
     let len = u32::from_be_bytes(buf) as usize;
 
-    r.read_exact(&mut buf[0..1])?;
+    r.read_exact(&mut buf[0..1]).await?;
     let op = buf[0].try_into()?;
 
     let mut data = vec![0; len];
-    r.read_exact(&mut data)?;
+    r.read_exact(&mut data).await?;
     Ok(Frame { op, data })
 }
 
