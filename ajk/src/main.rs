@@ -44,8 +44,7 @@ async fn main() -> AResult<()> {
     let cfg = config
         .servers
         .get(&server)
-        .ok_or_else(|| anyhow!("no server {} found", server))?
-        .clone();
+        .ok_or_else(|| anyhow!("no server {} found", server))?;
     let exit_code = jenkins::run(&cfg, &opts.args).await?;
     std::process::exit(exit_code);
 }

@@ -1,5 +1,4 @@
 use anyhow::{anyhow, Result};
-use hyper::body::Buf;
 use hyper::{Body, Client, Request, Uri};
 use hyper_proxy::{Intercept, Proxy, ProxyConnector};
 use hyper_tls::HttpsConnector;
@@ -10,7 +9,7 @@ use hyper::body::HttpBody as _;
 
 type AResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
-pub async fn run(cfg: &Server, args: &Vec<String>) -> AResult<i32> {
+pub async fn run(cfg: &'static Server, args: &[String]) -> AResult<i32> {
     let uuid = uuid::Uuid::new_v4();
     let mut connector = ProxyConnector::new(HttpsConnector::new())?;
     if let Some(ref proxy_url) = cfg.proxy {
@@ -38,7 +37,7 @@ fn request(cfg: &Server, uuid: &uuid::Uuid) -> Result<hyper::http::request::Buil
         .header("Transfer-encoding", "chunked"))
 }
 
-async fn recv<T>(client: Client<T>, cfg: &Server, uuid: uuid::Uuid, args: &Vec<String>) -> AResult<i32>
+async fn recv<T>(client: Client<T>, cfg: &'static Server, uuid: uuid::Uuid, args: &[String]) -> AResult<i32>
 where
     T: 'static + hyper::client::connect::Connect + Send + Sync + Clone,
 {
@@ -50,7 +49,7 @@ where
     let scfg = cfg.clone();
     let sargs = args.clone();
     let sender = tokio::spawn(async move {
-        send(client.clone(), scfg, uuid, &sargs).await
+        send(client.clone(), cfg, uuid, args).await
     });
 
     let (output, input) = tokio::io::duplex(1024);
@@ -102,7 +101,7 @@ async fn read_all_frame(mut output: tokio::io::DuplexStream) -> AResult<i32> {
 
 async fn send<T>(
     input_client: Client<T>,
-    cfg: Server,
+    cfg: &Server,
     uuid: uuid::Uuid,
     args: &[String],
 ) -> AResult<()>
