@@ -9,7 +9,7 @@ use hyper::body::HttpBody as _;
 
 type AResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
-pub async fn run(cfg: &'static Server, args: &[String]) -> AResult<i32> {
+pub async fn run(cfg: Server, args: Vec<String>) -> AResult<i32> {
     let uuid = uuid::Uuid::new_v4();
     let mut connector = ProxyConnector::new(HttpsConnector::new())?;
     if let Some(ref proxy_url) = cfg.proxy {
@@ -17,7 +17,7 @@ pub async fn run(cfg: &'static Server, args: &[String]) -> AResult<i32> {
         connector.add_proxy(Proxy::new(Intercept::All, proxy_uri));
     }
     let client = Client::builder().build(connector);
-    Ok(recv(client, cfg, uuid, args).await?)
+    Ok(recv(client, &cfg, uuid, &args).await?)
 }
 
 fn request(cfg: &Server, uuid: &uuid::Uuid) -> Result<hyper::http::request::Builder> {
@@ -37,7 +37,7 @@ fn request(cfg: &Server, uuid: &uuid::Uuid) -> Result<hyper::http::request::Buil
         .header("Transfer-encoding", "chunked"))
 }
 
-async fn recv<T>(client: Client<T>, cfg: &'static Server, uuid: uuid::Uuid, args: &[String]) -> AResult<i32>
+async fn recv<T>(client: Client<T>, cfg: &Server, uuid: uuid::Uuid, args: &Vec<String>) -> AResult<i32>
 where
     T: 'static + hyper::client::connect::Connect + Send + Sync + Clone,
 {
@@ -49,7 +49,7 @@ where
     let scfg = cfg.clone();
     let sargs = args.clone();
     let sender = tokio::spawn(async move {
-        send(client.clone(), cfg, uuid, args).await
+        send(client.clone(), &scfg, uuid, &sargs).await
     });
 
     let (output, input) = tokio::io::duplex(1024);
