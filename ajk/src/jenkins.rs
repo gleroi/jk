@@ -50,16 +50,18 @@ where
 
     let scfg = cfg.clone();
     let sargs = args.clone();
+    let (client_input, client_output) = tokio::io::duplex(1024);
+
     let sender = tokio::spawn(async move {
         send(client.clone(), &scfg, uuid, &sargs).await
     });
 
-    let (output, input) = tokio::io::duplex(1024);
+    let (server_output, server_input) = tokio::io::duplex(1024);
     let decoder = tokio::spawn(async {
-        read_all_frame(output).await
+        read_all_frame(server_output).await
     });
     let copier = tokio::spawn(async move {
-        copy_body(resp.body_mut(), input).await
+        copy_body(resp.body_mut(), server_input).await
     });
     let res = tokio::try_join!(decoder, copier, sender);
     match res {
@@ -105,11 +107,14 @@ async fn send<T>(
     input_client: Client<T>,
     cfg: &Server,
     uuid: uuid::Uuid,
+    client_output: DuplexStream,
     args: &[String],
 ) -> AResult<()>
 where
     T: 'static + hyper::client::connect::Connect + Send + Sync + Clone,
 {
+    //TODO: move to upper function (recv), write to client_input
+    // pass client_output as request body
     let mut buf = Vec::with_capacity(256);
     let mut encoder = Encoder::new(&mut buf);
     if args.is_empty() {
@@ -125,7 +130,7 @@ where
 
     let req = request(&cfg, &uuid)?
         .header("Side", "upload")
-        .body(buf.into())?;
+        .body()?;
     let _resp = input_client.request(req).await?;
     Ok(())
 }
@@ -204,7 +209,7 @@ impl TryFrom<u8> for Code {
 pub struct Encoder<'a, T: std::io::Write> {
     w: &'a mut T,
 }
-
+//TODO: convert to AsyncWrite
 impl<T: std::io::Write> Encoder<'_, T> {
     pub fn new(writer: &mut T) -> Encoder<T> {
         Encoder { w: writer }
