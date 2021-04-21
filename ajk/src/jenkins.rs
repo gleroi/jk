@@ -107,7 +107,6 @@ async fn send<T>(
     input_client: Client<T>,
     cfg: &Server,
     uuid: uuid::Uuid,
-    client_output: DuplexStream,
     args: &[String],
 ) -> AResult<()>
 where
@@ -130,7 +129,7 @@ where
 
     let req = request(&cfg, &uuid)?
         .header("Side", "upload")
-        .body()?;
+        .body(buf.into())?;
     let _resp = input_client.request(req).await?;
     Ok(())
 }
