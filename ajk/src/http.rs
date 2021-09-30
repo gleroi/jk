@@ -7,7 +7,7 @@ struct Transport {
 }
 
 impl Transport {
-    new(cfg: &Server) -> Self {
+    fn new(cfg: &Server) -> Self {
         let req = request(cfg, &uuid)?
             .header("Side", "download")
             .body(Body::empty())?;
