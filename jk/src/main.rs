@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Result};
 use bytes::{Buf, BufMut, BytesMut};
-use clap::Clap;
+use clap::Parser;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::fs;
@@ -9,7 +9,7 @@ use std::path::Path;
 
 mod jenkins;
 
-#[derive(Clap)]
+#[derive(Parser)]
 #[clap(version = "1.0", author = "Guillaume Leroi")]
 struct Opts {
     /// Select the jenkins instance to run against
