@@ -1,7 +1,8 @@
 use super::Cli;
 use crate::jenkins;
 use crate::jenkins::Frame;
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
+use log::debug;
 use pipe::{pipe, PipeReader, PipeWriter};
 use reqwest::blocking;
 use std::convert::TryInto;
@@ -66,6 +67,13 @@ impl Transport {
                 .header("Session", format!("{}", &uuid))
                 .header("Side", "download")
                 .send()?;
+            if !server_output.status().is_success() {
+                return Err(anyhow!(
+                    "RECV {}: {}",
+                    server_output.url(),
+                    server_output.status()
+                ));
+            }
             server_ready.wait(); // wait for main thread to send the command
             server_output.copy_to(&mut input)?;
             input.flush()?;
@@ -102,7 +110,10 @@ impl Transport {
                 .collect::<Result<Vec<u8>, std::io::Error>>()?;
             req = req.body(input);
             ready.wait(); // wait for thread to be ready to read the result
-            req.send().with_context(|| "while sending request... ")?;
+            let rep = req.send().with_context(|| "while sending request... ")?;
+            if !rep.status().is_success() {
+                return Err(anyhow!("SEND {}: {}", rep.url(), rep.status()));
+            }
             Ok(())
         });
         (client, input)
@@ -122,17 +133,21 @@ impl jenkins::Transport for Transport {
         if !self.initial_zero_skipped {
             self.read_exact(&mut buf[0..1])?;
             self.initial_zero_skipped = true;
+            debug!("read initial zero");
         }
 
         let mut buf = [0; 4];
         self.read_exact(&mut buf)?;
         let len = u32::from_be_bytes(buf) as usize;
+        debug!("read frame len: {}", len);
 
         self.read_exact(&mut buf[0..1])?;
+        debug!("read frame op: {}", buf[0]);
         let op = buf[0].try_into()?;
 
         let mut data = vec![0; len];
         self.read_exact(&mut data)?;
+        debug!("read frame data: {:?}", data);
         Ok(Frame { op, data })
     }
 

@@ -1,6 +1,7 @@
 use anyhow::{anyhow, Result};
 use bytes::{Buf, BufMut, BytesMut};
 use clap::Parser;
+use pretty_env_logger;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::fs;
@@ -29,6 +30,8 @@ struct Config {
 }
 
 fn main() -> Result<()> {
+    pretty_env_logger::init();
+
     let opts = Opts::parse();
     let config = if let Some(ref path) = opts.config {
         Path::new(path).to_path_buf()
